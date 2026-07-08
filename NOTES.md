@@ -1,1 +1,1 @@
-手動測試 git push
+手動測試 git kimi push

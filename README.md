@@ -643,7 +643,29 @@ Git Commit/Push 與 Deploy 的變更與已知情況:
   `AppConfig.Deploy`),確認過不會造成循環參照(`AI.Configuration` 只參照 `AI.Core`)。
 - `config/appsettings.json` 新增 `"Deploy": { "Command": null }`(預設不設定,DeployAgent 會
   誠實回報略過,不會假裝部署成功)。
-- **這批改動只在沙盒內做過語法層面檢查(括號配對、JSON/XML 合法性)跟 TypeScript 的
-  `tsc --noEmit`,還沒有實際 `dotnet build`/`dotnet run` 驗證過**,請在本機跑一次確認,尤其是
-  在真正的 git repository 裡測 commit/push 的完整核准流程,以及設定 `Deploy.Command` 之後
-  Deploy 步驟的完整核准流程。
+- **已在使用者本機完整驗證 Git commit/push 的真實核准流程**:`dotnet build` 確認
+  `AI.Agents → AI.Configuration` 的新 ProjectReference 沒有循環參照;在真正的 GitHub repo
+  (`kimi-commits/ai-devplatform-test`)上手動改一行 NOTES.md、不 commit,再從 Chat 面板送出
+  需求,Workflow 跑到 `git` 步驟時依序看到 `git.status`(偵測到變更)→`git.commit`
+  (Medium 風險,自動放行)→`git.push`(High 風險,VS Code 跳出核准 Modal)→核准後
+  真的執行 push,`git log` 確認新 commit 真的落在本地與遠端。Deploy 因為沒有設定
+  `Deploy.Command`,每次都誠實回報「略過」,行為符合預期。
+
+  驗證過程中發現並排除了兩個跟這次程式修改本身無關、但會讓人誤以為 push 失敗的環境問題,
+  一併記錄:
+  1. **MCP Server 編譯輸出沒有同步更新**:AI.Host 實際執行的是
+     `extensions/mcp-server/dist/index.js`(編譯後的 JS),但改完 `gitTool.ts`/`index.ts`
+     後忘了重新 `npm run build`,導致線上的 MCP Server 仍是舊版、根本沒有 `git.push` 這個
+     工具,第一次測試因此直接收到 `MCP error -32602: Tool git.push not found`。修好後啟動
+     log 的工具清單從 17 個變成 18 個,含 `git.push`。這也提醒了一件事:之後任何
+     `extensions/mcp-server/src/**` 的修改,套用前都必須記得 `npm run build`,不會自動生效。
+  2. **`.git/index.lock` 殘留鎖檔**:驗證過程中透過工具直接對這個 repo 跑了一次
+     `git fetch`,因權限問題中途失敗又沒清乾淨鎖檔,導致之後每次 `git.commit` 都失敗於
+     `Unable to create '.git/index.lock': File exists`。手動 `rm -f .git/index.lock`
+     (與 `.git/objects/maintenance.lock`)後恢復正常。這純粹是驗證過程中的操作失誤,
+     不是 AI-DOS 本身的邏輯問題,記錄下來是提醒:不要對同一個 repo 同時跑多個 git 相關
+     操作。
+- Deploy 因為沒有真實的雲端/Docker/Kubernetes 部署目標(規格書把那些留到 Phase 8),目前只
+  驗證了「沒設定 Deploy.Command 時誠實回報略過」這條路徑;「設定 Command 後真的執行、並卡
+  High 風險核准」這條路徑理論上跟 Git.Push 走的是同一套 Capability Guard 機制,但還沒有實際
+  設定一個測試指令跑過,如果要 100% 確認建議之後補測一次。

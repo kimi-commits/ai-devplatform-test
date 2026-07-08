@@ -23,7 +23,8 @@ public static class ToolCapabilityMap
         ["git.push"] = "Git.Push", // GitAgent 真的會呼叫(見 GitAgent.cs),Guard 在核准前完全不會執行 git push。
 
         ["build.run"] = "Build.Execute",
-        ["unity.build"] = "Build.Execute",
+        ["unity.build"] = "Build.Execute", // Phase 5 起 BuildAgent 真的會呼叫(見 BuildAgent.cs 與
+                                             // NativeUnityToolHandlers.cs),風險等級跟 dotnet build 一致(Low)。
         ["test.run"] = "Test.Run",
 
         ["terminal.run"] = "Terminal.Execute", // 任意 shell 指令,風險等同 Docker/Deploy,務必列管。

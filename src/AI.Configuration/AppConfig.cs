@@ -14,7 +14,8 @@ public sealed record AppConfig(
     [property: JsonPropertyName("Workflow")] string WorkflowPath,
     [property: JsonPropertyName("CapabilityRisk")] Dictionary<string, string> CapabilityRisk,
     [property: JsonPropertyName("ModelProvider")] ModelProviderConfig ModelProvider,
-    [property: JsonPropertyName("Deploy")] DeployOptions? Deploy = null);
+    [property: JsonPropertyName("Deploy")] DeployOptions? Deploy = null,
+    [property: JsonPropertyName("Unity")] UnityOptions? Unity = null);
 
 public sealed record ModelProviderConfig(
     [property: JsonPropertyName("BaseUrl")] string BaseUrl,
@@ -29,3 +30,18 @@ public sealed record ModelProviderConfig(
 /// </summary>
 public sealed record DeployOptions(
     [property: JsonPropertyName("Command")] string? Command = null);
+
+/// <summary>
+/// 規格書 Roadmap 真正定義的 Phase 5:Unity Tool,採 Native Adapter(見 AI.Agents/BuildAgent.cs、
+/// AI.Tools/Adapters/NativeUnityToolHandlers.cs)。Unity Editor Scripting API 本質上只能
+/// in-process/單一 Editor 行程呼叫,所以不像 Search/Git 那樣走 MCP 子行程,而是直接用
+/// <c>Process</c> 啟動本機 Unity Editor 的 batchmode 建置(-batchmode -quit -buildTarget)。
+/// 這個專案的執行環境沒有安裝 Unity Editor 可以真的測試,所以刻意用「使用者自行設定
+/// EditorPath」的最小可行版本——沒有設定 EditorPath 時,BuildAgent 對 Unity 專案一律誠實回報
+/// 「略過 Unity Build」,不會假裝建置成功,也不會影響既有的 dotnet build 路徑(非 Unity 專案完全
+/// 不受影響)。EditorPath 為 null/空字串時視為未設定。
+/// </summary>
+public sealed record UnityOptions(
+    [property: JsonPropertyName("EditorPath")] string? EditorPath = null,
+    [property: JsonPropertyName("BuildTarget")] string BuildTarget = "StandaloneOSX",
+    [property: JsonPropertyName("ExecuteMethod")] string? ExecuteMethod = null);

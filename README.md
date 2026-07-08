@@ -430,19 +430,28 @@ Pipeline 8 個 Step 全部成功執行完畢),以及**AI.Host 的 HTTP+SSE serve
 Tree/Agent 狀態四個 UI 真的接上 AI.Host**(Phase 3 延伸,規格書第 16 節的 VS Code Extension
 完整功能,已在使用者本機 VS Code 完整驗證過 Chat → Workflow → Diff → Task Tree 整條迴路,細節見
 下方變更紀錄),皆已完成並可端到端執行。**`GitAgent` 的 commit/push、`DeployAgent` 的部署指令
-執行也已經真的接上**(見上方「Git Commit/Push 與 Deploy 真實實作」,尚待使用者本機驗證)。
-VS Code Extension 的 Terminal 面板仍是尚未串接的部分。
+執行也已經真的接上,並已在使用者本機用真正的 GitHub repo 完整驗證過**(見上方「Git Commit/Push
+與 Deploy 真實實作」的驗證紀錄)。**規格書 Roadmap 真正定義的 Phase 5(Unity Tool,採 Native
+Adapter)也已完成**(見下方「Phase 5:Unity Tool」說明)。VS Code Extension 的 Terminal 面板仍是
+尚未串接的部分。
 
-**規格書 Roadmap 真正定義的 Phase 5——Unity Tool(採 Native Adapter)——完全沒有開始**:
-`extensions/mcp-server/src/tools/unityTool.ts` 的 `build()` 函式目前直接回傳
-`{ success: false, error: "Prefer Native Adapter for Unity; MCP path not implemented (Phase 5)." }`,
-是骨架建立時留下的占位符;`NativeToolAdapter` 也還沒有任何真正的 Unity 處理常式,只有一句提到
-Unity 的註解。這是這次盤點 Phase 進度時發現、之前誤把 Chat/Diff/Task Tree 標成「Phase 5」而蓋過去
-的問題,已在下方變更紀錄記錄修正。
+**Phase 5:Unity Tool(採 Native Adapter)**:`BuildAgent` 新增偵測——Workspace.RootPath 底下
+同時有 `Assets/` 與 `ProjectSettings/`(Unity 專案的標準特徵)時,改呼叫 `unity.build`
+(見 `AI.Tools/Adapters/NativeUnityToolHandlers.cs`),否則維持原本的 `dotnet build` 完全不變。
+`unity.build` 走 Native Adapter 而不是 MCP,原因跟規格書 v3 第 2、11 節的評估一致:Unity Editor
+Scripting API 本質上只能 in-process/單一 Editor 行程呼叫。這個專案的執行環境沒有安裝 Unity
+Editor、也沒有真實的 Unity 專案可以測試,所以做成「使用者在 `config/appsettings.json` 的
+`Unity.EditorPath` 設定 Unity Editor 執行檔路徑」這種最小可行版本——沒設定時,`BuildAgent`
+對偵測到的 Unity 專案一律誠實回報「略過 Unity Build」,不會假裝建置成功(跟 `DeployAgent` 沒設定
+`Deploy.Command` 時的處理方式一致)。`extensions/mcp-server/src/tools/unityTool.ts` 原本的 MCP
+版本予以保留當文件對照,但 `AI.Host/Program.cs` 的 `mcpToolNames` 清單已經拿掉 `"unity.build"`,
+實際上不會被呼叫到。**這批改動目前只做過語法層面的靜態檢查(括號配對、`tsc --noEmit`),還沒有
+實際 `dotnet build`/`dotnet run` 驗證過,也沒有真實 Unity 專案可以測試「設定 EditorPath 後真的
+執行建置」這條路徑**——如果本機剛好有裝 Unity Editor,可以建一個空的 Unity 專案、把
+`Unity.EditorPath` 指到 Editor 執行檔,跑一次 Chat 驗證看看。
 
 尚未實作(標記為 `TODO`,留在對應檔案內):
 
-- **規格書 Roadmap 的 Phase 5(Unity Tool,採 Native Adapter)完全沒有實作**,見上方說明。
 - VS Code Extension 的 Terminal 面板還是骨架,尚未串接 AI.Host。
 - Deploy 目前只支援「執行一句 shell 指令」這種最小可行版本(見上方「Git Commit/Push 與 Deploy
   真實實作」),不是規格書設想的「依 Configuration 選擇 Docker/Azure/AWS/GCP 子流程」——那個完整
@@ -459,6 +468,52 @@ Unity 的註解。這是這次盤點 Phase 進度時發現、之前誤把 Chat/D
 - Phase 1 先讓 Planner/Coder/Reviewer/QA 四個 Agent 共用同一個模型(`nvidia/llama-3.3-nemotron-super-49b-v1.5`),
   規格書原本設想的「每個 Agent 配不同模型」之後可在 `config/appsettings.json` 的 `Models` 各自
   改成想用的模型 ID(先到 <https://build.nvidia.com> 確認 ID 存在)。
+
+## 迭代開發迴圈(使用者自訂擴充,不是規格書 Roadmap 項目)
+
+使用者提出一個比規格書 Roadmap 更貼近實際團隊協作的願景:Product Manager Agent 先跟使用者多輪
+對話確認規格 → Project Manager Agent 分派任務給多個 Coder → Reviewer 審查不過打回 Coder 修正 →
+QA 抓到 Bug 回報 Project Manager 重新分派 → 全部通過後通知使用者驗收 → 使用者有意見時
+Product Manager 再跟使用者討論規格變更 → 迴圈繼續 → 使用者驗收通過後才手動按「Git」「Deploy」
+兩個按鈕。這條路線拆成七個階段(Stage A~G),目前完成 Stage A,其餘尚未開始。
+
+**Stage A:讓 Reviewer/QA 產生真的會擋流程的判定(已完成)**
+
+發現的問題:`workflows/default-pipeline.json`/`parallel-pipeline.json` 其實老早就定義了
+`review`/`qa` 兩個 Step 的 `onFailure: code`,`AgentOrchestrator`/`WorkflowEngine` 也真的支援
+失敗退回、`maxRetries`、超過上限時 `onRetryExceeded: EscalateToHuman`——但 `ReviewerAgent`/
+`QaAgent` 不管 LLM 實際回覆什麼內容,`AgentResult.Success` 都寫死 `true`(`ReviewArtifact.Verdict`
+也寫死 `true`),等於這個退回機制從骨架建立以來從來沒有被真的觸發過,是裝飾用的假迴圈。
+
+修正內容:
+
+- `prompts/reviewer.v1.md`/`prompts/qa.v1.md` 新增格式規定:LLM 回覆的第一行必須是
+  `VERDICT: APPROVED`/`VERDICT: NEEDS_CHANGES`(Reviewer)或 `VERDICT: PASS`/`VERDICT: FAIL`
+  (QA)。QA 的職責描述也一併老實改成「基於程式碼內容做推演式判斷」,不再說「執行測試」——這個
+  平台目前沒有自動化測試執行環境,`TestArtifact.Coverage` 依然固定 `0.0`,不假裝有真實覆蓋率。
+- `ReviewerAgent.cs`/`QaAgent.cs` 新增 `ParseVerdict`,解析上面那個標記決定
+  `AgentResult.Success`/`ReviewArtifact.Verdict`/`TestArtifact.Passed`(新增欄位,預設值 `true`
+  向後相容)。LLM 沒有照格式回覆時保守地視為 NEEDS_CHANGES/FAIL,不是預設放行——理由是「看不懂
+  結論就不能算過」,而不是重蹈原本寫死 true 的覆轍。
+- `CoderAgent.cs` 新增讀取最新一份 `ReviewArtifact`(`Verdict: false` 時)/`TestArtifact`
+  (`Passed: false` 時)的內容,組進被退回重做時的 Prompt,讓 Coder 知道具體要修什麼,而不是每次
+  重試都重新亂猜。`prompts/coder.v1.md` 也提醒模型「收到打回意見時要針對意見修正,不要整個重新
+  發想」。
+- `default-pipeline.json`/`parallel-pipeline.json` 的 `review`/`qa` 步驟補上 `maxRetries: 3`
+  (原本是 0,`WorkflowEngine.GetNextStep` 的邏輯是 `MaxRetries > 0` 才會限制次數,等於原本沒有
+  上限)。Reviewer/QA 從裝飾變成真的會擋流程之後,如果沒有這個上限,LLM 一直判定不過會導致
+  無限迴圈(一直燒 NVIDIA NIM 的 API 呼叫),補上限制後,連續 3 次不過會依
+  `onRetryExceeded: EscalateToHuman` 中止 Workflow,回報給使用者。
+- **這批改動只做過語法層面的靜態檢查(C# 括號配對、JSON 合法性),還沒有實際
+  `dotnet build`/`dotnet run` 驗證過**,尤其需要實測:(1) Reviewer 真的判定 NEEDS_CHANGES 時,
+  Coder 有沒有收到意見並修正過的建議,(2) 連續判定不過 3 次後,是不是真的觸發
+  `RetryExceeded` 事件並中止 Workflow,而不是無限迴圈。
+
+**Stage B~G(尚未開始)**:Product Manager Agent 多輪對話規格確認、Project Manager Agent 動態
+分派多個 Coder、QA Bug 回報 Project Manager 重新分派(而不是直接打回 Coder)、人工驗收關卡
+(Workflow 暫停、通知使用者、等待輸入)、驗收意見的「PM 討論 → 重新分派」完整迴圈(需要「專案」
+這個跨多次迭代的容器概念,現在系統的最大單位還是一次性的 Workflow 執行)、Git/Deploy 從自動
+Pipeline 步驟拆成 Chat 面板的手動按鈕。這些都還沒有實作。
 
 ## 已知限制 / 變更紀錄
 
@@ -665,7 +720,43 @@ Git Commit/Push 與 Deploy 的變更與已知情況:
      (與 `.git/objects/maintenance.lock`)後恢復正常。這純粹是驗證過程中的操作失誤,
      不是 AI-DOS 本身的邏輯問題,記錄下來是提醒:不要對同一個 repo 同時跑多個 git 相關
      操作。
-- Deploy 因為沒有真實的雲端/Docker/Kubernetes 部署目標(規格書把那些留到 Phase 8),目前只
-  驗證了「沒設定 Deploy.Command 時誠實回報略過」這條路徑;「設定 Command 後真的執行、並卡
-  High 風險核准」這條路徑理論上跟 Git.Push 走的是同一套 Capability Guard 機制,但還沒有實際
-  設定一個測試指令跑過,如果要 100% 確認建議之後補測一次。
+- **Deploy 的兩條路徑都已在使用者本機完整驗證**:沒設定 `Deploy.Command` 時每次都誠實回報
+  「略過」;設定成一句安全的測試指令(寫入帶時間戳的 `deploy-test-output.txt` 再印出來)後,
+  重啟 AI.Host、從 Chat 面板觸發 Workflow,跑到 `deploy` 步驟時真的跳出
+  `High 風險 Capability 待核准:Deploy.Execute` 的 VS Code Modal,核准後指令真的執行,
+  `deploy-test-output.txt` 內容確認時間戳正確。跟 Git.Push 走的是同一套 Capability Guard
+  機制,行為一致。測試完成後記得把 `config/appsettings.json` 的 `Deploy.Command` 改回 `null`
+  (或換成正式的部署指令),避免測試用的假指令留在設定檔裡。
+
+VS Code Extension 兩個小體驗改善(使用者實際用過之後反映):
+
+- Activity Bar 的 AI-DOS 面板新增「Open Chat」節點,排在 Task Tree / Agent Status 上方,點一下
+  直接開 Chat 面板,不用再 Cmd+Shift+P 找 "AI-DOS: Open Chat"(見
+  `extensions/vscode-extension/src/openChatViewProvider.ts`,`package.json` 的 `views` 陣列
+  順序也跟著調整)。
+- Chat 面板的輸入列改用 flex 版面固定貼在視窗最底部(`chatPanel.ts` 的 CSS),不會再被對話紀錄
+  往下推到畫面外。
+
+規格書 Roadmap 真正定義的 Phase 5(Unity Tool,採 Native Adapter)真實實作:
+
+- 新增 `AI.Configuration.UnityOptions`(`AppConfig.Unity`:`EditorPath`/`BuildTarget`/
+  `ExecuteMethod`)、`AI.Tools/Adapters/NativeUnityToolHandlers.cs`(`unity.build` Native Tool,
+  直接 `Process` 啟動本機 Unity Editor 的 `-batchmode -quit -buildTarget` 建置)。
+- `BuildAgent.cs` 新增偵測:Workspace.RootPath 底下同時有 `Assets/` 與 `ProjectSettings/`
+  (Unity 專案標準特徵)時呼叫 `unity.build`,否則維持原本的 `dotnet build` 完全不變,不影響
+  既有的 C#/.NET Pipeline 示範。`BuildAgent` 因此從無依賴改成需要注入 `AppConfig`、
+  `IToolRuntime`,`Program.cs` 的 DI 註冊跟著改成工廠函式。
+- `Program.cs` 新增註冊 `NativeToolAdapter(NativeUnityToolHandlers.CreateHandlers())`,順序排在
+  `McpToolAdapter` 之前(`ToolRuntime.InvokeAsync` 用 `FirstOrDefault` 找 Adapter,Native 要先
+  註冊才會贏);`mcpToolNames` 清單拿掉 `"unity.build"`,`extensions/mcp-server/src/tools/
+  unityTool.ts` 原本刻意留白的 MCP 版本保留當文件對照,但不會再被呼叫到。
+- `config/appsettings.json` 新增 `"Unity": { "EditorPath": null, "BuildTarget":
+  "StandaloneOSX", "ExecuteMethod": null }`。
+- **這批改動只做過語法層面的靜態檢查(括號配對、C# 語法、TypeScript `tsc --noEmit`、JSON 合法
+  性),還沒有實際 `dotnet build`/`dotnet run` 驗證過,也沒有真實 Unity 專案跟 Unity Editor
+  可以測試「設定 EditorPath 後真的執行建置」這條路徑**——這個專案的執行環境從頭到尾沒有裝過
+  Unity,跟 Deploy 當初的處境一樣。如果本機剛好有 Unity Editor,建議建一個空的 Unity 專案
+  (只要有 `Assets/`、`ProjectSettings/` 兩個資料夾)當 Workspace.RootPath,把
+  `Unity.EditorPath` 指到 Editor 執行檔路徑,跑一次 Chat 驗證 `build` 步驟真的會呼叫 Unity
+  Editor;沒有 Unity Editor 的話,至少可以驗證「偵測到 Unity 專案但沒設定 EditorPath 時誠實
+  略過」這條路徑不會壞掉既有的 dotnet build 示範。

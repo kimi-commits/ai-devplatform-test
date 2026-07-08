@@ -5,6 +5,7 @@ import { ChatPanel } from "./chatPanel";
 import { DiffPanel } from "./diffPanel";
 import { RunStateStore } from "./runStateStore";
 import { AgentStatusTreeProvider, AgentTaskTreeProvider } from "./taskTreeProvider";
+import { OpenChatViewProvider } from "./openChatViewProvider";
 
 /**
  * AI Development Platform VS Code Extension.
@@ -25,6 +26,11 @@ export function activate(context: vscode.ExtensionContext): void {
   outputChannel.appendLine("AI Development Platform extension activated.");
 
   const runStateStore = new RunStateStore();
+
+  // 排在 Task Tree / Agent Status 上方的「Open Chat」捷徑,避免使用者得先找到
+  // Cmd+Shift+P → "AI-DOS: Open Chat" 才能開面板。
+  const openChatViewProvider = new OpenChatViewProvider();
+  vscode.window.registerTreeDataProvider("aiDevPlatform.openChatView", openChatViewProvider);
 
   const taskTreeProvider = new AgentTaskTreeProvider(runStateStore);
   vscode.window.registerTreeDataProvider("aiDevPlatform.taskTree", taskTreeProvider);

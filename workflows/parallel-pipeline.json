@@ -4,8 +4,8 @@
     { "id": "plan",   "agent": "Planner",  "onSuccess": "code" },
     { "id": "code",   "parallel": ["CoderA", "CoderB"], "onAllSuccess": "merge", "onFailure": "code", "maxRetries": 3 },
     { "id": "merge",  "agent": "Merge",    "onSuccess": "review" },
-    { "id": "review", "agent": "Reviewer", "onSuccess": "qa",     "onFailure": "code" },
-    { "id": "qa",     "agent": "QA",       "onSuccess": "build",  "onFailure": "code" },
+    { "id": "review", "agent": "Reviewer", "onSuccess": "qa",     "onFailure": "code", "maxRetries": 3 },
+    { "id": "qa",     "agent": "QA",       "onSuccess": "build",  "onFailure": "code", "maxRetries": 3 },
     { "id": "build",  "agent": "Build",    "onSuccess": "git",    "onFailure": "code", "maxRetries": 3 },
     { "id": "git",    "agent": "Git",      "onSuccess": "deploy" },
     { "id": "deploy", "agent": "Deploy" }

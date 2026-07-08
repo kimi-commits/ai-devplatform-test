@@ -137,7 +137,9 @@ services.AddSingleton<IAgent>(sp => new CoderAgent(
     "Coder"));
 services.AddSingleton<IAgent, ReviewerAgent>();
 services.AddSingleton<IAgent, QaAgent>();
-services.AddSingleton<IAgent, BuildAgent>();
+services.AddSingleton<IAgent>(sp => new BuildAgent(
+    sp.GetRequiredService<AppConfig>(),
+    sp.GetRequiredService<IToolRuntime>()));
 services.AddSingleton<IAgent, GitAgent>();
 services.AddSingleton<IAgent>(sp => new DeployAgent(
     sp.GetRequiredService<AppConfig>(),
@@ -171,16 +173,23 @@ logger.LogInformation(
     "(可用 AI_DEVPLATFORM_APPROVAL_MODE=console|vscode 切換)。",
     approvalMode);
 
-// 7) Tool Runtime 組裝:Native File Adapter(直接檔案 I/O)+ MCP Adapter
+// 7) Tool Runtime 組裝:Native Adapter(直接 in-process 呼叫)+ MCP Adapter
 // (規格書 v3 第 11 節,Phase 2:McpToolAdapter + Native File Adapter 真實接線)。
-// File.* 一律走 Native(驗證 Native Adapter 可行性);Search/Git/Build/Terminal/Browser/Unity 走 MCP,
+// File.*/Deploy.*/Unity.* 一律走 Native;Search/Git/Build(.run)/Terminal/Browser 走 MCP,
 // 呼叫 extensions/mcp-server(Node.js 子行程),兩者透過同一個 IToolRuntime 對 Agent 呈現統一介面。
+// ToolRuntime.InvokeAsync 用 FirstOrDefault 找第一個 CanHandle 的 Adapter,所以 Native 一定要在
+// McpToolAdapter 之前註冊,同名工具(理論上不會重複,但保險起見)才會是 Native 贏。
 var toolRuntime = provider.GetRequiredService<IToolRuntime>();
 toolRuntime.RegisterAdapter(new NativeToolAdapter(NativeFileToolHandlers.CreateHandlers()));
 // Deploy 真實實作(規格書 v1 第 8 節,見 DeployAgent.cs / NativeDeployToolHandlers.cs 的範疇說明):
 // 執行 config/appsettings.json 的 Deploy.Command 設定的一句 shell 指令,一樣走 Native Adapter,
 // 跟檔案操作用同一種「直接 in-process 呼叫」後端,不需要額外一個 MCP 子行程。
 toolRuntime.RegisterAdapter(new NativeToolAdapter(NativeDeployToolHandlers.CreateHandlers()));
+// Phase 5 真實實作(規格書 Roadmap:Unity Tool,採 Native Adapter,見 BuildAgent.cs /
+// NativeUnityToolHandlers.cs):Unity Editor Scripting API 本質上只能 in-process 呼叫,跟
+// extensions/mcp-server/src/tools/unityTool.ts 裡刻意留白的 MCP 版本不同,這裡才是真正會被呼叫的
+// 那一個。
+toolRuntime.RegisterAdapter(new NativeToolAdapter(NativeUnityToolHandlers.CreateHandlers()));
 
 AI.MCP.Client.McpToolInvoker? mcpInvoker = null;
 var mcpServerEntry = Path.Combine(repoRoot, "extensions", "mcp-server", "dist", "index.js");
@@ -189,11 +198,14 @@ if (File.Exists(mcpServerEntry))
     var mcpClient = AI.MCP.Client.McpClient.CreateForNodeServer(mcpServerEntry);
     mcpInvoker = new AI.MCP.Client.McpToolInvoker(mcpClient);
 
+    // "unity.build" 刻意不在這個清單裡:Phase 5 真實實作改成 Native Adapter(見上面
+    // NativeUnityToolHandlers 的註冊),extensions/mcp-server/src/tools/unityTool.ts 那個版本
+    // 保留只是文件對照用途,不會被 ToolRuntime 呼叫到。
     var mcpToolNames = new[]
     {
         "search.searchText", "search.searchSymbol", "search.searchRegex",
         "git.status", "git.diff", "git.commit", "git.checkout", "git.branch", "git.push",
-        "build.run", "terminal.run", "browser.open", "unity.build"
+        "build.run", "terminal.run", "browser.open"
     };
     toolRuntime.RegisterAdapter(new McpToolAdapter(mcpInvoker, mcpToolNames));
 

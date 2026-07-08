@@ -44,6 +44,10 @@
     "views": {
       "aiDevPlatform": [
         {
+          "id": "aiDevPlatform.openChatView",
+          "name": "Open Chat"
+        },
+        {
           "id": "aiDevPlatform.taskTree",
           "name": "Task Tree"
         },

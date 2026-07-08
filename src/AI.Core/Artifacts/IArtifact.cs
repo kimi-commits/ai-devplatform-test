@@ -45,7 +45,7 @@ public sealed record ReviewArtifact(
 
 public sealed record TestArtifact(
     string ArtifactId, string WorkflowId, string? SnapshotId, DateTimeOffset CreatedAt,
-    IReadOnlyList<string> Results, double Coverage, string? RefPath = null)
+    IReadOnlyList<string> Results, double Coverage, bool Passed = true, string? RefPath = null)
     : ArtifactBase(ArtifactId, nameof(TestArtifact), WorkflowId, SnapshotId, CreatedAt, RefPath);
 
 public sealed record BuildLogArtifact(

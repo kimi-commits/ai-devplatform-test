@@ -134,12 +134,23 @@ export class ChatPanel {
 <head>
 <meta charset="UTF-8" />
 <style>
-  body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 8px; }
-  #transcript { border: 1px solid var(--vscode-panel-border); border-radius: 4px; height: 60vh; overflow-y: auto; padding: 8px; margin-bottom: 8px; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: var(--vscode-font-family);
+    color: var(--vscode-foreground);
+    padding: 8px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  /* 對話紀錄區佔滿剩餘空間、自己捲動;輸入列(下面 #inputRow)固定在視窗最底部,
+     不會因為訊息變多而被推到畫面外,需要額外往下捲才看得到。 */
+  #transcript { flex: 1 1 auto; min-height: 0; border: 1px solid var(--vscode-panel-border); border-radius: 4px; overflow-y: auto; padding: 8px; margin-bottom: 8px; }
   .msg { margin-bottom: 6px; white-space: pre-wrap; }
   .user { color: var(--vscode-textLink-foreground); }
   .system { color: var(--vscode-descriptionForeground); }
-  #inputRow { display: flex; gap: 6px; }
+  #inputRow { flex: 0 0 auto; display: flex; gap: 6px; }
   #messageInput { flex: 1; }
   button { cursor: pointer; }
   .diffButton { margin-left: 6px; }

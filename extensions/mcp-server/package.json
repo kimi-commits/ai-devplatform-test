@@ -1,0 +1,20 @@
+{
+  "name": "ai-devplatform-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP Tool Layer for AI Development Platform: File / Search / Git / Build / Terminal / Browser / Unity (spec v1 section 10).",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/index.js",
+    "smoke-test": "node scripts/smoke-test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.9.3"
+  }
+}

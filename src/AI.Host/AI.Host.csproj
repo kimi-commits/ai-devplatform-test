@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AI.Host</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AI.Core\AI.Core.csproj" />
+    <ProjectReference Include="..\AI.Models\AI.Models.csproj" />
+    <ProjectReference Include="..\AI.Runtime\AI.Runtime.csproj" />
+    <ProjectReference Include="..\AI.Workflow\AI.Workflow.csproj" />
+    <ProjectReference Include="..\AI.Tools\AI.Tools.csproj" />
+    <ProjectReference Include="..\AI.Agents\AI.Agents.csproj" />
+    <ProjectReference Include="..\AI.Artifacts\AI.Artifacts.csproj" />
+    <ProjectReference Include="..\AI.Knowledge\AI.Knowledge.csproj" />
+    <ProjectReference Include="..\AI.Memory\AI.Memory.csproj" />
+    <ProjectReference Include="..\AI.MCP\AI.MCP.csproj" />
+    <ProjectReference Include="..\AI.Plugin\AI.Plugin.csproj" />
+    <ProjectReference Include="..\AI.Configuration\AI.Configuration.csproj" />
+    <ProjectReference Include="..\AI.Logging\AI.Logging.csproj" />
+  </ItemGroup>
+
+  <!-- Phase 5:Chat/Diff/Task Tree(規格書 v3 第 16 節)用 HTTP + Server-Sent Events 取代規格書
+       原寫的 gRPC(理由見 README「已知限制 / 變更紀錄」),用 ASP.NET Core 的 Minimal API + Kestrel。
+       這裡刻意不把整個專案的 Sdk 換成 Microsoft.NET.Sdk.Web,只加這個 FrameworkReference——
+       這是官方支援、對既有 Console App(Sdk="Microsoft.NET.Sdk")影響最小的做法,不會改變
+       Phase 1~4 已經驗證過的 CLI pipeline 模式的行為。這個 FrameworkReference 本身就包含
+       Microsoft.Extensions.DependencyInjection,原本手動加的 PackageReference 已移除
+       (使用者本機 build 時出現 NU1510 警告,提示這筆重複,故拿掉)。 -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

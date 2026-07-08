@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Phase0MafDemo</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Microsoft Agent Framework(規格書 Phase 0 驗證對象) -->
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.9.0" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.9.0" />
+    <!-- 官方 OpenAI .NET SDK,搭配 OpenAIClientOptions.Endpoint 指向 NVIDIA NIM 的 OpenAI-Compatible 端點 -->
+    <PackageReference Include="OpenAI" Version="2.11.0" />
+  </ItemGroup>
+
+</Project>

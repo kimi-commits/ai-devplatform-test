@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AI.Plugin</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AI.Core\AI.Core.csproj" />
+    <ProjectReference Include="..\AI.Tools\AI.Tools.csproj" />
+    <ProjectReference Include="..\AI.Agents\AI.Agents.csproj" />
+    <ProjectReference Include="..\AI.Workflow\AI.Workflow.csproj" />
+  </ItemGroup>
+
+</Project>

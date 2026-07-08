@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AI.MCP</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AI.Core\AI.Core.csproj" />
+    <ProjectReference Include="..\AI.Tools\AI.Tools.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 官方 MCP C# SDK(規格書 v3 第 11 節,Phase 2:AI.MCP 接真正的 ModelContextProtocol C# SDK)。 -->
+    <PackageReference Include="ModelContextProtocol" Version="1.3.0" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+# .NET
+bin/
+obj/
+*.user
+
+# Node
+node_modules/
+dist/
+out/
+
+# Runtime data
+.artifacts/
+.ai-suggestions/
+.ai-devplatform/
+logs/
+*.log

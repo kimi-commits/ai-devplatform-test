@@ -1,0 +1,76 @@
+{
+  "name": "ai-devplatform",
+  "displayName": "AI Development Platform",
+  "description": "VS Code Extension for the AI Development Operating System (AI-DOS): chat, diff review, agent status, task tree.",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiDevPlatform.openChat",
+        "title": "AI-DOS: Open Chat"
+      },
+      {
+        "command": "aiDevPlatform.acceptDiff",
+        "title": "AI-DOS: Accept Diff"
+      },
+      {
+        "command": "aiDevPlatform.rejectDiff",
+        "title": "AI-DOS: Reject Diff"
+      },
+      {
+        "command": "aiDevPlatform.approveHighRiskAction",
+        "title": "AI-DOS: Approve High-Risk Action"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiDevPlatform",
+          "title": "AI-DOS",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiDevPlatform": [
+        {
+          "id": "aiDevPlatform.taskTree",
+          "name": "Task Tree"
+        },
+        {
+          "id": "aiDevPlatform.agentStatus",
+          "name": "Agent Status"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AI Development Platform",
+      "properties": {
+        "aiDevPlatform.apiBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:5170",
+          "description": "AI.Host 以 AI_DEVPLATFORM_MODE=serve 啟動時監聽的 HTTP 位址(Chat/Diff/Task Tree 用,規格書 v3 第 16 節)。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.9.3"
+  }
+}

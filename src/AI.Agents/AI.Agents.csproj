@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AI.Agents</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AI.Core\AI.Core.csproj" />
+    <ProjectReference Include="..\AI.Runtime\AI.Runtime.csproj" />
+    <ProjectReference Include="..\AI.Tools\AI.Tools.csproj" />
+    <ProjectReference Include="..\AI.Artifacts\AI.Artifacts.csproj" />
+    <ProjectReference Include="..\AI.Memory\AI.Memory.csproj" />
+    <ProjectReference Include="..\AI.Knowledge\AI.Knowledge.csproj" />
+    <ProjectReference Include="..\AI.Models\AI.Models.csproj" />
+    <ProjectReference Include="..\AI.Configuration\AI.Configuration.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.8" />
+  </ItemGroup>
+
+</Project>

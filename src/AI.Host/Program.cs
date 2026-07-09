@@ -101,11 +101,13 @@ services.AddSingleton<IKnowledgeBase, MarkdownKnowledgeBase>();
 
 // Phase 3:High 風險 Capability 的核准機制(規格書 v3 第 6 節)。"怎麼問人" 這件事拆成
 // IApprovalPrompt 這個獨立介面,依環境變數 AI_DEVPLATFORM_APPROVAL_MODE 決定用哪一種:
-// - "console"(預設):Console y/n,不需要開 VS Code 就能測,已實測驗證過核准/拒絕兩條路徑。
-// - "vscode":寫檔案到 .ai-devplatform/approvals/,由 VS Code Extension 的
-//   AI-DOS 面板跳出圖形化確認對話框(規格書 v3 第 16 節),對應
-//   extensions/vscode-extension/src/approvalBridge.ts。
-var approvalMode = (Environment.GetEnvironmentVariable("AI_DEVPLATFORM_APPROVAL_MODE") ?? "console").Trim().ToLowerInvariant();
+// - "vscode"(使用者自訂擴充,改為預設):寫檔案到 .ai-devplatform/approvals/,由 VS Code
+//   Extension 的 AI-DOS 面板跳出圖形化確認對話框(規格書 v3 第 16 節),對應
+//   extensions/vscode-extension/src/approvalBridge.ts——使用者平時都在 VS Code 裡操作,
+//   不想每次啟動都手動 export 這個環境變數才會跳視窗,所以改成預設值。
+// - "console":Console y/n,不需要開 VS Code 就能測(例如寫自動化測試腳本、CI),已實測驗證過
+//   核准/拒絕兩條路徑,需要時用 AI_DEVPLATFORM_APPROVAL_MODE=console 明確指定切回這種模式。
+var approvalMode = (Environment.GetEnvironmentVariable("AI_DEVPLATFORM_APPROVAL_MODE") ?? "vscode").Trim().ToLowerInvariant();
 if (approvalMode == "vscode")
 {
     var approvalsDirectory = Path.Combine(repoRoot, ".ai-devplatform", "approvals");

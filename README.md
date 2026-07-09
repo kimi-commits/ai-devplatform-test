@@ -173,9 +173,14 @@ dotnet run --project src/AI.Host
 
 `IApprovalPrompt` 的兩種實作,用環境變數 `AI_DEVPLATFORM_APPROVAL_MODE` 切換:
 
-- **`console`(預設)**:`ConsoleApprovalPrompt`,在終端機印出提示,輸入 `y`/`yes` 才核准。已實測
+- **`vscode`(使用者自訂擴充,改為預設)**:`VsCodeBridgeApprovalPrompt`。原本預設是
+  `console`,但實測時使用者平時都在 VS Code 裡操作,沒設這個環境變數就會退回終端機
+  y/n 提示,容易忘記設定、以為卡住;改成預設 `vscode` 之後,不加任何環境變數就會跳圖形化
+  對話框,需要在沒有 VS Code 的環境測(例如寫自動化測試腳本、CI)才需要明確指定
+  `AI_DEVPLATFORM_APPROVAL_MODE=console`。
+- **`console`**:`ConsoleApprovalPrompt`,在終端機印出提示,輸入 `y`/`yes` 才核准。已實測
   驗證過核准/拒絕兩條路徑都正確(見下方「已知限制 / 變更紀錄」)。
-- **`vscode`**:`VsCodeBridgeApprovalPrompt`,把請求寫成
+- `vscode` 模式細節:`VsCodeBridgeApprovalPrompt` 把請求寫成
   `.ai-devplatform/approvals/{requestId}.request.json`,輪詢等待
   `{requestId}.response.json` 出現(逾時預設 10 分鐘,逾時視為拒絕);
   `extensions/vscode-extension/src/approvalBridge.ts` 用 `FileSystemWatcher` 監看這個目錄,

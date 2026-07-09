@@ -228,6 +228,13 @@ dotnet run --project src/AI.Host
 6. 可以打開 Extension Development Host 視窗的 Output 面板(View → Output),下拉選單選
    "AI-DOS",會看到 `[ApprovalBridge]` 開頭的 Log,方便對照。
 
+**後續更新(移除)**:上面這段 `AI_DEVPLATFORM_TEST_CAPABILITY_GUARD` 驗證路徑後來造成困擾——
+如果這個環境變數不小心留在 shell 設定檔(`~/.zshrc` 等)裡沒清掉,每次啟動 `AI.Host` 都會
+建一個 `ai-devplatform-guard-test-*.txt` 暫存檔並跳出 High 風險核准提示,使用者實測時誤以為
+是持續性的 bug。這段 demo 已經達成原本目的(驗證過 Console 跟 VS Code 兩種核准模式都正常),
+之後也不再需要,所以直接把 `Program.cs` 裡對應的程式碼區塊刪掉了——上面的重現步驟僅供歷史
+參考,現在設定這個環境變數已經沒有作用。
+
 ## Phase 4:平行 Coder、Workspace Snapshot、Merge Agent
 
 規格書 v3 第 8 節的 Workflow DSL 從 Phase 1 就已經定義好 `WorkflowStep.Parallel`/`OnAllSuccess`
@@ -509,11 +516,284 @@ Product Manager 再跟使用者討論規格變更 → 迴圈繼續 → 使用者
   Coder 有沒有收到意見並修正過的建議,(2) 連續判定不過 3 次後,是不是真的觸發
   `RetryExceeded` 事件並中止 Workflow,而不是無限迴圈。
 
-**Stage B~G(尚未開始)**:Product Manager Agent 多輪對話規格確認、Project Manager Agent 動態
-分派多個 Coder、QA Bug 回報 Project Manager 重新分派(而不是直接打回 Coder)、人工驗收關卡
-(Workflow 暫停、通知使用者、等待輸入)、驗收意見的「PM 討論 → 重新分派」完整迴圈(需要「專案」
-這個跨多次迭代的容器概念,現在系統的最大單位還是一次性的 Workflow 執行)、Git/Deploy 從自動
-Pipeline 步驟拆成 Chat 面板的手動按鈕。這些都還沒有實作。
+**Stage B:Product Manager Agent + 多輪對話規格確認(已完成)**
+
+新增內容:
+
+- `src/AI.Agents/ProductManagerAgent.cs`:新的 `ProductManagerAgent`,提供 `ReplyAsync`(對話中
+  的下一句回覆)、`FinalizeSpecAsync`(使用者確認後產出結構化規格書)兩個方法。刻意不實作
+  `IAgent`——`IAgent.ExecuteAsync` 的參數是為了 AgentOrchestrator 依 Workflow DSL 分派一次性
+  Step 設計的,跟「伺服器要記住多輪對話歷史」這種用法不搭,所以這是一個單純的 DI 服務,由
+  `ChatEndpoints.cs` 的新端點直接呼叫,不會出現在 `AgentOrchestrator` 的 Agent 清單裡。
+- `prompts/product-manager.v1.md`:PM 的角色設定——追問關鍵問題、適時整理重點讓使用者確認、
+  不在這階段討論實作細節,規格夠清楚時要主動說可以開始了(但實際上何時定案由使用者按按鈕決定,
+  不是 PM 自己說了算)。
+- `src/AI.Host/Server/PlanningSession.cs`:`PlanningSession`/`PlanningSessionRegistry`,記憶體內
+  儲存對話歷史,跟 `RunTracker`/`RunRegistry` 一樣是 MVP 取捨(AI.Host 重啟就會遺失)。
+- `ChatEndpoints.cs` 新增四個端點:`POST /api/planning`(開新對話)、
+  `POST /api/planning/{sessionId}/message`(延續對話)、`GET /api/planning/{sessionId}`
+  (查歷史)、`POST /api/planning/{sessionId}/finalize`(定案規格書並啟動 Workflow)。`finalize`
+  刻意重用跟 `/api/chat` 完全一樣的「啟動 Workflow」邏輯(同一個 `RunRegistry`、同一個
+  `seedArtifacts` 模式),所以定案後可以直接沿用既有的 `/api/chat/{runId}/stream` 等端點,
+  不需要另外做一套串流機制。
+- VS Code Extension:`apiClient.ts` 新增 `startPlanning`/`continuePlanning`/`finalizePlanning`;
+  `chatPanel.ts` 的 Workflow 下拉選單新增「PM 規劃討論(新)」選項,選這個模式時對話會延續同一個
+  `planningSessionId`,每次 PM 回覆下面都會出現「✅ 確認規格,開始開發」按鈕,使用者隨時可以按
+  (不是一定要等 PM 自己說規格夠清楚),按下去才會定案並啟動既有的 Workflow 執行流程。
+
+已知限制(誠實記錄,不是這次故意簡化,是既有架構就有的限制):
+
+- **不是真正的多輪 Chat API**:`AI.Models.Providers.OpenAiCompatibleProvider.CompleteAsync`
+  目前的實作會把 `ModelRequest.Messages` 裡所有非 system 的訊息合併成一段文字,餵給底層
+  Microsoft Agent Framework 的 `AIAgent.RunAsync(string)`(單一字串參數),不是真的用 Chat API
+  原生支援的多輪 messages 陣列——這是 Phase 0 建立以來就有的既有限制,牽動 5 個 Agent 共用的
+  底層元件,Stage B 範疇不動它。`ProductManagerAgent` 改成自己把對話歷史組成一份帶「使用者/PM」
+  角色標籤的逐字稿,當作單一個 user 訊息送出,模型至少看得出來每一句是誰說的,但終究不是原生
+  多輪對話格式,對話輪數變多時品質可能會受影響。
+- 定案後永遠使用 `default-pipeline.json`(序列 Pipeline),Chat 面板目前沒有讓使用者在定案當下
+  另外選「平行 Coder」——這是 UI 簡化的取捨,之後如果需要可以再加一個選擇器。
+- PM 對話 session 存在記憶體裡,AI.Host 重啟就會遺失,沒有持久化。
+
+Stage B 上線後使用者實測發現一個體驗問題:LLM 呼叫常常要 30~60 秒,PM 對話、定案、Workflow
+每個 Step 中間完全沒有其他輸出,容易誤以為卡住了。補上狀態列(`chatPanel.ts` 的 `#statusBar`):
+PM 對話/定案這種「等一個同步回覆」的情境會顯示「🤔 PM 思考中……」/「📋 正在整理規格書……」並
+暫時鎖住輸入框(避免手滑連點兩次);Workflow 執行中會顯示「⚙️ 執行中:Step 'x'(Agent)……」,
+這個狀態不鎖輸入,因為使用者這時候可能想另外開一場新對話。
+
+（曾經把輸入框從單行 `input` 改成支援換行、隨內容自動長高的 `textarea`,Enter 換行、
+Ctrl+Enter/Cmd+Enter 才送出;後來在排查下面「送出按鈕完全沒反應」的過程中,為了縮小變數
+先改回單行 `input`+Enter 送出。確認根因是 webview 內容大小門檻、跟這個改動完全無關,
+而且改成外部 `media/chatPanel.css`/`media/chatPanel.js` 檔案之後就沒有大小限制的顧慮了,
+所以又把多行 `textarea` 加了回來——現在的輸入框一樣是 Enter 換行、Ctrl+Enter
+(Mac 是 Cmd+Enter)送出,隨內容自動長高。）
+
+Stage B 再次調整(使用者實測後要求):原本「確認規格,開始開發」是一個按鈕做兩件事(產生 PRD +
+啟動 Workflow),使用者反映應該拆開——先看過 PRD 內容,確認沒問題再手動決定要不要開始開發。
+
+- `POST /api/planning/{sessionId}/finalize` 改成只請 PM 產生結構化規格書、存回
+  `PlanningSession.SetFinalSpec`,回傳 `{ finalSpec }`(200),不碰 Workflow。
+- 新增 `POST /api/planning/{sessionId}/start-development`,讀取 session 裡已經存好的規格書
+  (沒有就回 400,提示要先呼叫 finalize),才執行原本「載入 Workflow、建立 Workspace、
+  啟動 Run」那段邏輯。
+- Chat 面板:PM 回覆下面的按鈕改成「📋 確認規格,產生 PRD」,點下去只顯示 PRD 內容,底下多一個
+  「🚀 開始開發」按鈕,按下去才呼叫 `start-development`、接上既有的 SSE 串流邏輯。
+  `planningSessionId` 因此要撐過「產生 PRD」這一步不能清空(使用者可能想先看 PRD、再回頭跟
+  PM 多聊幾句調整,重新產生一次),要到真的按下「開始開發」才清空。
+- **這批改動只做過語法層面的靜態檢查(C# 括號配對、TypeScript `tsc --noEmit`、JSON 合法性),
+  還沒有實際 `dotnet build`/`dotnet run` 驗證過**,尤其需要實測:(1) PM 對話能不能來回好幾輪、
+  回覆內容有沒有真的參考到之前討論過的內容,(2) 按下「確認規格,開始開發」之後,產出的規格書
+  有沒有正確變成 Planner 的輸入、後續 Workflow 有沒有正常執行。
+
+**重大 bug 修復:Chat 面板送出按鈕完全沒反應(webview `document.write` 崩潰)**——上面這批改動
+上線後,使用者實測發現 Chat 面板整個壞掉:不管打什麼字、選哪個模式,按「送出」完全沒反應,
+連 `console.log` 都印不出來。用 Webview Developer Tools 掛上去看,VS Code 內部
+(`webviewElement.ts` → `onFrameLoaded` → `document.write`)直接丟出
+`Uncaught SyntaxError: Failed to execute 'write' on 'Document': Invalid or unexpected token`,
+代表我們的 `<script>` 連解析都沒解析成功。
+
+排查過程(逐步加法測試,從已確認會動的最小 HTML 開始,一塊一塊加回真實內容,而不是從壞掉的
+內容裡減東西——後者一開始因為使用者誤判「有印 log」導致方向錯誤,教訓是加法測試比減法測試
+可靠):
+
+1. 換行 textarea、emoji(含 `🧑‍💼` 這種 ZWJ 組合 emoji)都個別排除,不是原因。
+2. 最小版 HTML(純 ASCII Hello World)本身沒問題,證實 webview panel 建立本身沒問題。
+3. 最小版 + 完整真實 `<style>` → 正常。最小版 + 完整真實 `<style>` + 真實 `<body>` → 正常。
+4. 最小版 + `<style>` + `<body>` + 完整真實 `<script>` → 壞。把 script 從中間切開,只留
+   `setStatus`/`appendUser`/`appendSystem`/`appendPm` 四個分支 → 正常,包含 PM 多輪對話、
+   PRD 按鈕都真的動起來了。加回第 5 個分支(`appendSpecReady`)→ 壞。
+5. 懷疑是 `appendSpecReady` 裡的 `"\n\n"` 跳脫字元,單獨測試排除。加一個內容完全無害的
+   ASCII 假第 5 分支 → 一樣壞,證實跟 `appendSpecReady` 的實際內容無關。維持 4 個分支、
+   只用一段等長的純註解把長度補齊(不加新分支)→ 一樣壞。
+6. 結論:**問題是 `webview.html` 整條字串的總長度**,實測門檻落在 UTF-8 約 5.9KB~6.1KB
+   之間,跟內容本身(中文、emoji、跳脫字元、分支數、巢狀結構)完全無關。這台機器上的
+   VS Code 是很新的建置(1.127.0、Electron 42.2.0、Chromium 148,約一週內的版本),
+   推測是這個版本組合裡 webview 載入管線的一個迴歸 bug,不是我們程式碼邏輯的問題。
+
+修復方式:改用 VS Code 官方文件建議的標準做法——不要把 CSS/JS 內嵌在 `webview.html` 的
+字串裡,改成獨立檔案透過 `webview.asWebviewUri()` + `<link rel="stylesheet">`/
+`<script src="">` 載入。外部資源走的是另一條載入路徑,不會整包塞進 `document.write`,
+徹底繞開這個大小門檻:
+
+- 新增 `media/chatPanel.css`(原本內嵌的樣式,內容不變)、`media/chatPanel.js`(原本內嵌的
+  前端邏輯,內容不變,額外把之前排查時拿掉的 emoji 加回來,因為已證實跟 emoji 無關)。
+- `chatPanel.ts` 的 `ChatPanel` 建構子/`createOrShow` 多帶一個 `extensionUri` 參數,
+  `createWebviewPanel` 的 options 加上 `localResourceRoots: [vscode.Uri.joinPath(extensionUri, "media")]`
+  (允許 webview 讀取 media 資料夾),`renderHtml()` 改成只回傳一份很小的骨架 HTML
+  (標籤結構本身),CSS/JS 都用 `<link>`/`<script src="">` 指到上面兩個外部檔案。
+- `extension.ts` 呼叫 `ChatPanel.createOrShow` 時多傳 `context.extensionUri`。
+- 往後這個面板要加內容,一律加到 `media/chatPanel.css`/`media/chatPanel.js` 這兩個檔案裡,
+  不要再把 HTML 用內嵌 `<style>`/`<script>` 字串塞回 `renderHtml()`,否則同樣的大小門檻
+  遲早會再被撞到(而且會很難查,因為完全沒有任何錯誤訊息落在我們自己的程式碼裡)。
+- 只做過 TypeScript `tsc --noEmit` 跟 `node --check`(對抽出來的 JS 內容)驗證,**還沒有
+  在真實 VS Code 環境裡完整測過這次修復**,需要使用者實測確認送出按鈕、PM 對話、
+  PRD 產生、開始開發整條流程都恢復正常。
+
+## Stage C:Project Manager Agent 動態分派多個 Coder
+
+對應使用者原始 7 階段願景裡的「專案經理 Agent 分發任務給軟體工程 Coders Agents」。流程:
+Chat 面板選「Project Manager」模式,原本的文字輸入框換成「PRD 檔案」下拉選單,選一份 PRD 送出後,
+Project Manager Agent 讀 PRD 動態拆解任務,分派給三個固定具名角色平行開發:
+
+- **CoderA — Front-End Engineer**(前端工程師)
+- **CoderB — Back-End Engineer**(後端工程師)
+- **CoderC — System Architect**(系統架構師)
+
+「動態」的意思是:不是程式碼寫死每個角色固定做什麼,而是每次都讓 LLM 讀當下這份 PRD 的實際
+內容,自行判斷這次前端/後端/架構的工作範疇分別是什麼(某些 PRD 可能某個角色任務很少甚至
+沒有,由 LLM 自行拿捏並老實反映,不強行平均分配)。
+
+### 架構決策
+
+- **借用 Phase 4 已有的平行 Coder 機制**(`AgentOrchestrator.RunParallelBranchesAsync`、
+  Workflow DSL 的 `"parallel": [...]`),不是重新做一套分派引擎——新增
+  `workflows/pm-dispatch-pipeline.json`:`dispatch`(ProjectManager)→
+  `code`(平行 `["CoderA","CoderB","CoderC"]`)→ `merge` → `review` → `qa` → `report`。
+  （`report` 之後的步驟是 Stage E 加的,見下方「Stage E~G」章節;原本這裡接的是
+  `build` → `git` → `deploy`,Stage E 把這三步從 `pm-dispatch-pipeline.json` 拿掉,
+  改成使用者在 Chat 面板手動觸發的獨立小 Workflow。）
+- **新增 `TaskAssignmentArtifact`**(`AI.Core/Artifacts/IArtifact.cs`):跟 `DocumentArtifact`
+  的差異是多了 `AssigneeAgentName`。`ProjectManagerAgent` 讀 PRD 後,針對 CoderA/CoderB/CoderC
+  各自產生一份專屬的 `TaskAssignmentArtifact`;`CoderAgent.ExecuteAsync` 改成優先找「指定給
+  自己名字」的那一份,這樣平行執行時三個 Coder 收到的是各自不同的任務,而不是像
+  `parallel-pipeline.json` 原本那樣全部分支收到同一份 Planner 任務規格(那是「兩人各自獨立解
+  同一題、之後比較」的用法,語意上跟這裡的「分工」不一樣)。找不到自己名字的專屬任務時
+  (理論上不會發生,除非 Project Manager 回覆格式跑掉),退回原本讀 `DocumentArtifact` 的邏輯,
+  向下相容 `default-pipeline.json`/`parallel-pipeline.json`。
+- **`ProjectManagerAgent`**(`AI.Agents/ProjectManagerAgent.cs`)是新的 `IAgent` 實作,跟
+  Stage B 的 `ProductManagerAgent`(產品經理,負責跟使用者對話產出 PRD)是完全不同的角色,
+  不要搞混:一個負責「討論出 PRD」,一個負責「PRD 出來後怎麼分工」。輸出格式靠
+  `prompts/project-manager.v1.md` 規定的 `### CoderA` / `### CoderB` / `### CoderC` 三個
+  標題解析,解析不到某個角色時,誠實地把完整 PRD 原文交給那個 Coder,而不是留空。
+- **CoderA/CoderB/CoderC 現在各自載入獨立的 prompt 檔案**(`CoderAgent` 新增建構子參數
+  `promptFile`,預設值 `"coder.v1.md"` 不影響 `default-pipeline.json` 用的泛用 `"Coder"`):
+  `prompts/coder-frontend.v1.md` / `coder-backend.v1.md` / `coder-architect.v1.md`。這就是
+  使用者要的「之後可以對這些 Coders 寫 skill」——直接編輯對應的 prompt 檔案調整某個角色的
+  專長跟做事風格,不需要改程式碼、不需要重新編譯。**取捨說明**:這也代表
+  `parallel-pipeline.json` 原本「CoderA/CoderB 對稱、互相獨立解同一題」的用法,現在兩人會
+  各自用前端/後端的角色視角看同一份完整任務——因為 `parallel-pipeline.json` 沒有改成使用
+  `TaskAssignmentArtifact`(還是整份 Planner 任務規格),實際影響有限,但語意上確實變了,
+  真正「動態分派不同任務」的是新的 `pm-dispatch-pipeline.json`。
+- **PRD 落地成檔案**(`AI.Host/Server/PrdStore.cs`):存在 `.ai-devplatform/prds/{id}.json`,
+  跟 `approvals/`、`.ai-suggestions/` 同一種「檔案即介面」風格,不用額外資料庫。使用者按
+  「確認規格,產生 PRD」(`/api/planning/{sessionId}/finalize`)時順便存一份;新增
+  `GET /api/prds` 列出摘要(id/title/createdAt,標題取內容第一個非空行)給下拉選單用,
+  `POST /api/pm/dispatch`(body: `{ prdId }`)讀該份 PRD 內容、啟動
+  `pm-dispatch-pipeline.json`,跟 `/api/chat`、`/start-development` 共用同一套
+  RunRegistry/SSE 串流機制。
+- **VS Code Chat 面板**:`workflowSelect` 多一個 `"pm-dispatch"` 選項;選到這個模式時,
+  webview(`media/chatPanel.js`)把文字 `<textarea>` 換成 `<select id="prdSelect">`,並跟
+  extension host 要一份 PRD 清單(`requestPrdList` → `ChatPanel.loadPrdList` 呼叫
+  `GET /api/prds` → `prdList` 訊息回填選項);送出時改送 `dispatchPm` 訊息,
+  `ChatPanel.dispatchPm` 呼叫 `POST /api/pm/dispatch`,之後跟其他模式一樣接上既有的
+  SSE 串流顯示進度。
+- **順手修的既有 bug**(`ReviewerAgent.cs`):原本用 `.FirstOrDefault()` 抓 CodeArtifact 來
+  審查,有兩個問題——(1) Coder 被退回重做後,`.FirstOrDefault()` 抓到的還是第一次的舊摘要,
+  Reviewer 等於永遠在審同一份沒改過的內容,重試迴圈「根據意見修正」變成空轉;(2) 平行 Coder
+  有多個 CodeArtifact,`.FirstOrDefault()` 只看得到第一個分支。改成:如果偵測到 Merge 步驟
+  產生的彙整報告(有不只一個 CodeArtifact,且有一份 DocumentArtifact 的時間點晚於最新一個
+  CodeArtifact),審查那份彙整報告(涵蓋所有分支);否則審查最新一個 CodeArtifact(而不是
+  最舊的)。這個修正同時讓 `parallel-pipeline.json` 跟新的 `pm-dispatch-pipeline.json` 受益。
+
+### 已知限制 / 尚未驗證
+
+- 只做過 C# 括號配對的靜態檢查跟 JSON 合法性檢查,**完全還沒有 `dotnet build`/`dotnet run`
+  實測過**,需要使用者實際跑一輪:PM 規劃討論產生 PRD → 切到「Project Manager」模式 → 下拉
+  選單有沒有正確列出剛才那份 PRD → 選了送出後,三個 Coder 是不是真的收到不同的任務內容
+  (可以在 Log 或 `.ai-suggestions/codera-*.md`、`.ai-suggestions/coderb-*.md`、
+  `.ai-suggestions/coderc-*.md` 這幾個檔案裡對照)→ Merge/Review/QA/Build/Git/Deploy 有沒有
+  正常接續執行。
+- `MergeAgent`/`ReviewerAgent`/`QaAgent` 都沒有針對「這是角色分工、不是redundant 探索」這件事
+  做特別處理——Merge 的比較報告用語(「各分支寫了哪些檔案」)在分工情境下讀起來會有點怪(分工
+  不是要比較選哪個,是要合併全部),但功能上不影響流程,先不動,之後有需要再調整用語。
+- 沒有做「PRD 刪除」或「PRD 管理」介面,`.ai-devplatform/prds/` 底下的檔案會一直累積,需要的話
+  之後可以加一個清理機制或列表管理 UI。
+
+**Stage D(已取消)**:原本規劃「QA Bug 回報給 Project Manager 重新分派,而不是直接打回
+Coder」,使用者確認後決定維持現狀——QA 失敗一律直接打回 `code` 步驟(既有行為,
+`pm-dispatch-pipeline.json` 的 `qa.onFailure` 沒有變動)。
+
+## Stage E~G:測試報告 + 人工驗收關卡 + 修改規格/完成驗收
+
+對應使用者原始 7 階段願景裡「QA 測試完成後,人工驗收决定要修規格還是收尾」這一段。流程:
+QA 判定 PASS 後,系統把這次的 PRD 內容跟 QA 結論落地成一份「測試報告」;Chat 面板選
+「Product Manager(驗收)」模式,原本的文字輸入框換成「測試報告」下拉選單(標題會對應到
+它出自哪份 PRD),選一份報告後有兩顆按鈕:「修改規格」(回到 PM 討論,針對這次沒過的地方
+調整規格,另外產生一版新 PRD)、「完成驗收」(手動觸發 Git commit/push + Deploy)。
+
+### 架構決策
+
+- **人工驗收關卡不是真的讓 Workflow「暫停」**:這個平台的 Run 從 Phase 1 開始就是「一次性
+  狀態機執行到底」的模型(`AgentOrchestrator.RunAsync` 是一個 `while` 迴圈,沒有可以被外部
+  訊號喚醒的持久化暫停狀態),重新設計成真正可暫停/恢復的 Run 風險和範圍都超出這次要做的
+  事。改成老實的做法:`pm-dispatch-pipeline.json` 的 `qa` 成功後接一個新的 `report` 步驟
+  (`TestReportAgent`),`report` 步驟的 `onSuccess` 刻意留空——`WorkflowEngine.GetNextStep`
+  找不到下一步就回傳 `null`,`AgentOrchestrator.RunAsync` 的 `while` 迴圈自然結束,整條自動化
+  pipeline 到「測試報告已產生」這裡正常收尾(`Success=true`)。後續「完成驗收」或「修改規格」
+  都是使用者主動觸發的**新的一次** Workflow/API 呼叫,不是原本那個 Run 的延續——對使用者來說
+  效果等同「流程停在這裡等你」,但實作上老實地是「這條自動化流程做完它該做的事就結束了」。
+- **新增 `TestReportAgent`**(`AI.Agents/TestReportAgent.cs`,`Kind=Tool`、不呼叫 LLM):讀
+  `InputArtifacts` 裡最原始的 `DocumentArtifact`(整條 Pipeline 一開始 seed 的 PRD 內容)跟
+  最新一份 `TestArtifact`(QA 判定),交給新的 `TestReportStore`
+  (`AI.Agents/TestReportStore.cs`)存成 `.ai-devplatform/test-reports/{id}.json`,跟
+  `PrdStore`/`.ai-suggestions/`/`approvals/` 同一種「檔案即介面」風格。**放在 `AI.Agents`
+  專案而不是 `AI.Host.Server`(`PrdStore` 所在位置)**:因為 `TestReportAgent`(`AI.Agents`)
+  跟 `ChatEndpoints.cs`(`AI.Host`)都要用到同一個類別,`AI.Host` 本來就參照 `AI.Agents`,
+  反過來會變成循環參照,所以共用類別放在 `AI.Agents` 這邊,跟 `ProductManagerAgent`/
+  `PlanningTurn` 已經確立的慣例一致。
+- **測試報告「命名對應 PRD」不用額外的外鍵欄位**:標題直接沿用 `PrdStore.DeriveTitle` 完全
+  相同的推導邏輯(取內容第一個非空行),對同一份 PRD 內容跑出來的標題文字自然一樣,使用者
+  在下拉選單上一眼就能看出這份報告對應哪份 PRD,不需要另外維護、可能跟原始內容脫鉤的
+  PrdId 關聯欄位。
+- **Git/Deploy 拆成獨立的 `workflows/accept-pipeline.json`**(只有 `git` → `deploy` 兩步,
+  從 `pm-dispatch-pipeline.json` 移除):使用者按「完成驗收」時呼叫新的
+  `POST /api/reports/{id}/accept`,跟 `/api/pm/dispatch` 用同一套啟動邏輯(`RunRegistry`、
+  fire-and-forget `Task.Run`),Chat 面板複用既有的 SSE 串流機制,不用另外做一套。
+  `GitAgent`/`DeployAgent` 本身完全沒有改動——它們從 Stage A 就已經是「環境因素不中斷流程、
+  誠實回報略過原因」的設計,不需要為了這次拆分而調整。
+- **「修改規格」重用既有的 PM 規劃討論流程,不引入「專案」跨迭代容器**:原始 7 階段願景提到
+  這個迴圈需要一個「專案」概念裝下多次迭代,但實際做下來發現不需要——新增
+  `POST /api/reports/{id}/revise`:建一個新的 `PlanningSession`(帶 `Origin="revise"`
+  標記),把選中報告的 PRD 內容 + QA 結論當作第一句「使用者發言」丟給 `ProductManagerAgent`
+  開場,回傳形狀刻意跟 `/api/planning`(一般「PM 規劃討論」模式)一致,前端直接複用同一套
+  UI(`appendPm`、「確認規格,產生 PRD」按鈕、`finalizePlanning`)。使用者確認新規格後產生
+  的是**一份新的 PRD 檔案**,回到「Project Manager」模式的下拉選單手動選它、重新分派——
+  用「PRD 版本 + 使用者手動銜接」取代「專案容器」,少了一層新概念跟新的資料模型,行為上一樣
+  能做到「驗收意見 → PM 討論 → 重新分派」的迴圈。
+  - `PlanningSession` 新增 `Origin` 欄位(`"fresh"` / `"revise"`),`/finalize` 回應多帶一個
+    `origin` 欄位:Chat 面板收到 `origin === "revise"` 時,新 PRD 產生後**不顯示**「🚀 開始
+    開發」按鈕(那顆按鈕接的是 `default`/`parallel` pipeline,不是「Project Manager」動態
+    分派流程,顯示出來會誤導使用者按錯),改顯示提示文字請使用者手動切到「Project Manager」
+    模式選新 PRD。
+  - 「修改規格」按鈕點下去之後,webview 會收到一個新的 `switchMode` 訊息,自動把
+    `workflowSelect` 切回 `"pm"` 模式,讓文字輸入框重新出現——後續使用者打字繼續討論時,
+    走的還是原本 `sendMessage`/`sendPlanningMessage` 那套邏輯(靠 `planningSessionId` 判斷
+    延續同一場對話),不需要新增額外的訊息類型。
+- **VS Code Chat 面板**:`workflowSelect` 多一個 `"acceptance"`
+  (顯示「Product Manager(驗收,選測試報告)」)選項;選到這個模式時,webview
+  (`media/chatPanel.js`)把文字輸入框連同「送出」按鈕都藏起來,換成
+  `<select id="reportSelect">` + 兩顆按鈕(`reviseButton`「修改規格」、`acceptButton`
+  「完成驗收」),下拉選單一併顯示 QA 判定的 ✅/⚠️ 圖示。`requestReportList` →
+  `ChatPanel.loadReportList` 呼叫 `GET /api/reports` → `reportList` 訊息回填選項,跟
+  `pm-dispatch` 模式的 `prdSelect` 是同一種做法。
+
+### 已知限制
+
+- 跟 Stage C 一樣,只做過 C# 括號配對的靜態檢查、JSON 合法性檢查、`npx tsc --noEmit`、
+  `node --check`,**完全還沒有 `dotnet build`/`dotnet run` 實測過**,需要使用者實際跑一輪:
+  用「Project Manager」模式跑完一次分派 → QA 判定 PASS 後,切到「Product Manager(驗收)」
+  模式,下拉選單有沒有正確列出剛才那次跑出來的測試報告 → 分別測「完成驗收」(有沒有正常跑
+  `git`/`deploy`,可以參考既有的 Git/Deploy 真實環境驗證紀錄)跟「修改規格」(PM 開場白有沒有
+  正確帶到 PRD+QA 內容、定案後是否正確地不顯示「開始開發」按鈕、切回「Project Manager」模式
+  選新 PRD 能不能正常重新分派)。
+- Reviewer 失敗(`review.onFailure`)目前**沒有**跟著改走人工驗收這條路,還是直接打回
+  `code`——使用者原始描述只提到「QA Bug」要走這個流程(而且 Stage D 本身也取消了),Review
+  意見維持 Stage A 就有的既有行為不變。
+- `default-pipeline.json`/`parallel-pipeline.json`(非 PM 動態分派的兩條 Pipeline)完全沒有
+  改動,還是自動跑到底(`qa` → `build` → `git` → `deploy`),不會產生測試報告、也不會出現在
+  「Product Manager(驗收)」模式的下拉選單裡——這個人工驗收關卡目前只接在
+  `pm-dispatch-pipeline.json` 這條有 PRD 檔案概念的流程上。
+- 測試報告一樣沒有「刪除/管理」介面,`.ai-devplatform/test-reports/` 底下的檔案會一直累積,
+  跟 `.ai-devplatform/prds/` 的既有限制一樣,之後有需要再加清理機制。
 
 ## 已知限制 / 變更紀錄
 

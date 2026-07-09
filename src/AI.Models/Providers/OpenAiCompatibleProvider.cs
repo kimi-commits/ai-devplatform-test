@@ -22,10 +22,22 @@ public sealed class OpenAiCompatibleProvider : IModelProvider
 
     public string ProviderName { get; }
 
-    public OpenAiCompatibleProvider(string providerName, string apiKey, string baseUrl)
+    /// <summary>
+    /// networkTimeout(使用者自訂擴充,見 AppConfig.ModelProviderConfig.TimeoutSeconds 類別
+    /// 註解):`OpenAIClientOptions` 繼承自 `System.ClientModel.Primitives.
+    /// ClientPipelineOptions`,`NetworkTimeout` 預設只有 100 秒——49B 大模型單輪生成常常超過
+    /// 這個時間,逾時後 SDK 自己的 `ClientRetryPolicy` 還會重試 3 次(每次都套用同一個 100 秒
+    /// 逾時),4 次全部逾時才把 `"Retry failed after 4 tries."` 往上拋成整個 Step 失敗。這裡
+    /// 開放呼叫端指定逾時時間,預設值 300 秒是保底(沒有人特地傳參數進來的情況)。
+    /// </summary>
+    public OpenAiCompatibleProvider(string providerName, string apiKey, string baseUrl, TimeSpan? networkTimeout = null)
     {
         ProviderName = providerName;
-        var options = new OpenAIClientOptions { Endpoint = new Uri(baseUrl) };
+        var options = new OpenAIClientOptions
+        {
+            Endpoint = new Uri(baseUrl),
+            NetworkTimeout = networkTimeout ?? TimeSpan.FromSeconds(300)
+        };
         _client = new OpenAIClient(new ApiKeyCredential(apiKey), options);
     }
 

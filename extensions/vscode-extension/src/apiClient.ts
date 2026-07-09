@@ -50,6 +50,45 @@ export interface RejectDiffResponse {
   errors: { path: string; error: string }[];
 }
 
+/** Stage B:Product Manager 多輪對話規格確認,見 AI.Host/Server/ChatEndpoints.cs 的 /api/planning* 端點。 */
+export interface PlanningStartedResponse {
+  sessionId: string;
+  reply: string;
+}
+
+export interface PlanningMessageResponse {
+  reply: string;
+}
+
+/** 只產生 PRD,不啟動 Workflow(見下方 finalizePlanning)。prdId 可能是 undefined(存檔失敗時)。 */
+export interface PlanningFinalizeResponse {
+  finalSpec: string;
+  prdId?: string;
+  /** Stage F:"fresh" 一般規劃討論;"revise" 是從「修改規格」按鈕開始的討論,見 PlanningSession.Origin。 */
+  origin?: string;
+}
+
+/**
+ * Stage C(見 AI.Host/Server/PrdStore.cs):PRD 落地成檔案之後的摘要,給「Project Manager」
+ * 模式的下拉選單用。
+ */
+export interface PrdSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+}
+
+/**
+ * Stage E(見 AI.Agents/TestReportStore.cs):測試報告落地成檔案之後的摘要,給「Product
+ * Manager(驗收)」模式的下拉選單用。
+ */
+export interface TestReportSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  passed: boolean;
+}
+
 function request(method: string, url: string, body?: unknown): Promise<{ status: number; json: any }> {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
@@ -121,6 +160,88 @@ export async function acceptDiff(baseUrl: string, artifactId: string): Promise<v
 export async function rejectDiff(baseUrl: string, artifactId: string): Promise<RejectDiffResponse> {
   const { json } = await request("POST", `${baseUrl}/api/diff/${encodeURIComponent(artifactId)}/reject`);
   return json as RejectDiffResponse;
+}
+
+export async function startPlanning(baseUrl: string, message: string): Promise<PlanningStartedResponse> {
+  const { status, json } = await request("POST", `${baseUrl}/api/planning`, { message });
+  if (status !== 200) {
+    throw new Error((json && json.error) || `POST /api/planning 失敗(HTTP ${status})`);
+  }
+  return json as PlanningStartedResponse;
+}
+
+export async function continuePlanning(baseUrl: string, sessionId: string, message: string): Promise<PlanningMessageResponse> {
+  const { status, json } = await request("POST", `${baseUrl}/api/planning/${encodeURIComponent(sessionId)}/message`, { message });
+  if (status !== 200) {
+    throw new Error((json && json.error) || `POST /api/planning/{sessionId}/message 失敗(HTTP ${status})`);
+  }
+  return json as PlanningMessageResponse;
+}
+
+/** 只產生 PRD、存回 session,不啟動 Workflow。要真的開始開發,使用者確認 PRD 之後另外呼叫 startDevelopment。 */
+export async function finalizePlanning(baseUrl: string, sessionId: string): Promise<PlanningFinalizeResponse> {
+  const { status, json } = await request("POST", `${baseUrl}/api/planning/${encodeURIComponent(sessionId)}/finalize`);
+  if (status !== 200) {
+    throw new Error((json && json.error) || `POST /api/planning/{sessionId}/finalize 失敗(HTTP ${status})`);
+  }
+  return json as PlanningFinalizeResponse;
+}
+
+/** 使用者確認 PRD 沒問題後才呼叫:用 session 裡已經存好的規格書啟動 Workflow。 */
+export async function startDevelopment(baseUrl: string, sessionId: string, workflow: string): Promise<ChatStartedResponse> {
+  const { status, json } = await request("POST", `${baseUrl}/api/planning/${encodeURIComponent(sessionId)}/start-development`, { workflow });
+  if (status !== 202) {
+    throw new Error((json && json.error) || `POST /api/planning/{sessionId}/start-development 失敗(HTTP ${status})`);
+  }
+  return json as ChatStartedResponse;
+}
+
+/** Stage C:列出所有已產生的 PRD 檔案,給「Project Manager」模式的下拉選單用。 */
+export async function listPrds(baseUrl: string): Promise<PrdSummary[]> {
+  const { status, json } = await request("GET", `${baseUrl}/api/prds`);
+  if (status !== 200) {
+    throw new Error((json && json.error) || `GET /api/prds 失敗(HTTP ${status})`);
+  }
+  return json as PrdSummary[];
+}
+
+/** Stage C:選好一份 PRD 後送出,交給 Project Manager Agent 動態拆解、分派給 CoderA/CoderB/CoderC。 */
+export async function dispatchProjectManager(baseUrl: string, prdId: string): Promise<ChatStartedResponse> {
+  const { status, json } = await request("POST", `${baseUrl}/api/pm/dispatch`, { prdId });
+  if (status !== 202) {
+    throw new Error((json && json.error) || `POST /api/pm/dispatch 失敗(HTTP ${status})`);
+  }
+  return json as ChatStartedResponse;
+}
+
+/** Stage E:列出所有已產生的測試報告,給「Product Manager(驗收)」模式的下拉選單用。 */
+export async function listReports(baseUrl: string): Promise<TestReportSummary[]> {
+  const { status, json } = await request("GET", `${baseUrl}/api/reports`);
+  if (status !== 200) {
+    throw new Error((json && json.error) || `GET /api/reports 失敗(HTTP ${status})`);
+  }
+  return json as TestReportSummary[];
+}
+
+/**
+ * Stage F:「修改規格」按鈕——帶著這份報告的 PRD+QA 結論開一場新的 PM 討論,回傳形狀刻意跟
+ * startPlanning 一致,讓 Chat 面板可以直接沿用既有的 PM 對話 UI(appendPm/finalize 等)。
+ */
+export async function reviseReport(baseUrl: string, reportId: string): Promise<PlanningStartedResponse> {
+  const { status, json } = await request("POST", `${baseUrl}/api/reports/${encodeURIComponent(reportId)}/revise`);
+  if (status !== 200) {
+    throw new Error((json && json.error) || `POST /api/reports/{id}/revise 失敗(HTTP ${status})`);
+  }
+  return json as PlanningStartedResponse;
+}
+
+/** Stage G:「完成驗收」按鈕——手動觸發 Git commit/push + Deploy(workflows/accept-pipeline.json)。 */
+export async function acceptReport(baseUrl: string, reportId: string): Promise<ChatStartedResponse> {
+  const { status, json } = await request("POST", `${baseUrl}/api/reports/${encodeURIComponent(reportId)}/accept`);
+  if (status !== 202) {
+    throw new Error((json && json.error) || `POST /api/reports/{id}/accept 失敗(HTTP ${status})`);
+  }
+  return json as ChatStartedResponse;
 }
 
 /**

@@ -17,6 +17,7 @@ public sealed class CoderAgent : IAgent
     private readonly IModelRegistry _modelRegistry;
     private readonly PromptTemplateLoader _prompts;
     private readonly IToolRuntime _toolRuntime;
+    private readonly string _promptFile;
 
     public string Name { get; }
 
@@ -27,26 +28,40 @@ public sealed class CoderAgent : IAgent
         "File.Read", "File.Write", "Knowledge.Query"
     };
 
-    /// <summary>支援多個 Coder 實例(Coder A / Coder B),Phase 4 平行執行時各自對應獨立 worktree。</summary>
-    public CoderAgent(IModelRegistry modelRegistry, PromptTemplateLoader prompts, IToolRuntime toolRuntime, string name = "Coder")
+    /// <summary>
+    /// 支援多個 Coder 實例(Coder A / Coder B / Coder C),Phase 4 平行執行時各自對應獨立 worktree。
+    /// Stage C 新增 <paramref name="promptFile"/>:讓 CoderA/CoderB/CoderC 可以各自載入不同的
+    /// System Prompt(例如 coder-frontend.v1.md / coder-backend.v1.md / coder-architect.v1.md),
+    /// 對應使用者要的「之後可以對這些 Coders 各自寫 skill」——skill 就是直接編輯這個 prompt 檔案,
+    /// 不需要改程式碼、不需要重新編譯。預設值 "coder.v1.md" 保留給沒有指定角色的一般 Coder
+    /// (例如 default-pipeline.json 的單一 "Coder"),行為完全不變。
+    /// </summary>
+    public CoderAgent(IModelRegistry modelRegistry, PromptTemplateLoader prompts, IToolRuntime toolRuntime, string name = "Coder", string promptFile = "coder.v1.md")
     {
         _modelRegistry = modelRegistry;
         _prompts = prompts;
         _toolRuntime = toolRuntime;
         Name = name;
+        _promptFile = promptFile;
     }
 
     public async Task<AgentResult> ExecuteAsync(AgentExecutionRequest request, CancellationToken cancellationToken = default)
     {
-        var systemPrompt = await _prompts.LoadAsync("coder.v1.md", cancellationToken);
+        var systemPrompt = await _prompts.LoadAsync(_promptFile, cancellationToken);
         var provider = _modelRegistry.GetProviderForAgent(Name);
         var model = _modelRegistry.GetModelNameForAgent(Name);
 
-        // 用 LastOrDefault 而不是 FirstOrDefault:Phase 5 的 Chat 介面(見
-        // AI.Host/Server/ChatEndpoints.cs)會把使用者的原始需求文字當作 seedArtifacts 放在
-        // InputArtifacts 最前面,Planner 執行後產生的任務規格 DocumentArtifact 接在後面——
-        // Coder 應該要看 Planner「消化過」的任務規格,而不是使用者的原始需求文字。
-        var taskSpec = request.InputArtifacts.OfType<DocumentArtifact>().LastOrDefault()?.Content
+        // Stage C:如果 ProjectManagerAgent 針對「這個名字的 Coder」產生了專屬任務(見
+        // workflows/pm-dispatch-pipeline.json 的 "dispatch" 步驟),優先使用那一份,讓平行的
+        // 三個 Coder 各自收到不同的任務,而不是像 Phase 4 舊有的 parallel-pipeline.json 那樣
+        // 全部分支收到同一份 Planner 任務規格。用 LastOrDefault 而不是 FirstOrDefault:
+        // Phase 5 的 Chat 介面(見 AI.Host/Server/ChatEndpoints.cs)會把使用者的原始需求文字
+        // 當作 seedArtifacts 放在 InputArtifacts 最前面,Planner/ProjectManager 執行後產生的
+        // 任務規格接在後面——Coder 應該要看「消化過」的任務規格,而不是原始需求文字。
+        var myAssignment = request.InputArtifacts.OfType<TaskAssignmentArtifact>()
+            .LastOrDefault(a => a.AssigneeAgentName == Name);
+        var taskSpec = myAssignment?.Content
+            ?? request.InputArtifacts.OfType<DocumentArtifact>().LastOrDefault()?.Content
             ?? "(沒有收到 Planner 的任務規格,請自行示範一個最小的程式修改建議。)";
 
         // Stage A:Reviewer/QA 現在會真的判定 NEEDS_CHANGES/FAIL 並觸發 DSL 的 onFailure 退回這裡

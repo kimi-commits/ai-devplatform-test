@@ -78,7 +78,12 @@ var apiKey = Environment.GetEnvironmentVariable(appConfig.ModelProvider.ApiKeyEn
         "請先到 https://build.nvidia.com 申請 API Key,再執行:" +
         $"export {appConfig.ModelProvider.ApiKeyEnvVar}=\"nvapi-...\"");
 
-var modelProvider = new OpenAiCompatibleProvider("nvidia-nim", apiKey, appConfig.ModelProvider.BaseUrl);
+// 使用者自訂擴充:appConfig.ModelProvider.TimeoutSeconds 覆蓋 OpenAI SDK 預設的 100 秒
+// NetworkTimeout(見 OpenAiCompatibleProvider.cs 建構子註解、AppConfig.ModelProviderConfig
+// 類別註解——CoderA/B/C 這類大模型單輪生成常常超過 100 秒導致 Step 失敗)。
+var modelProvider = new OpenAiCompatibleProvider(
+    "nvidia-nim", apiKey, appConfig.ModelProvider.BaseUrl,
+    TimeSpan.FromSeconds(appConfig.ModelProvider.TimeoutSeconds));
 var modelRegistry = new ModelRegistry();
 foreach (var (agentName, modelName) in appConfig.Models)
 {
@@ -129,6 +134,19 @@ services.AddSingleton<IWorkflowEngine, WorkflowEngine>();
 services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
 
 // 6) Agents(每個 Agent 私有 Memory,不共享,規格書 v3 第 13 節)
+// Stage B(使用者自訂擴充,見 README「迭代開發迴圈」章節):ProductManagerAgent 刻意不透過
+// IAgent 集合註冊——它不是 Workflow Step 會呼叫的一次性 Agent,是給 ChatEndpoints.cs 的
+// /api/planning* 端點直接注入使用的多輪對話服務,注入 IEnumerable<IAgent> 的地方
+// (AgentOrchestrator 建構子)完全不會看到它,不會有名稱衝突的疑慮。
+services.AddSingleton(sp => new AI.Agents.ProductManagerAgent(
+    sp.GetRequiredService<IModelRegistry>(),
+    sp.GetRequiredService<PromptTemplateLoader>()));
+// Stage C(使用者自訂擴充,見 README「迭代開發迴圈」章節):ProjectManagerAgent 是「專案經理」,
+// 跟上面的 ProductManagerAgent(「產品經理」)是不同角色,不要搞混。這裡「有」透過 IAgent
+// 集合註冊(跟 ProductManagerAgent 不同)——因為 ProjectManagerAgent 是 Workflow DSL 裡一次性
+// 呼叫的 Step(見 workflows/pm-dispatch-pipeline.json 的 "dispatch" 步驟),不是多輪對話服務,
+// 走的是一般 AgentOrchestrator 流程,自然會出現在 _agentsByName 裡(Name="ProjectManager")。
+services.AddSingleton<IAgent, AI.Agents.ProjectManagerAgent>();
 services.AddSingleton<IAgent, PlannerAgent>();
 services.AddSingleton<IAgent>(sp => new CoderAgent(
     sp.GetRequiredService<IModelRegistry>(),
@@ -137,6 +155,10 @@ services.AddSingleton<IAgent>(sp => new CoderAgent(
     "Coder"));
 services.AddSingleton<IAgent, ReviewerAgent>();
 services.AddSingleton<IAgent, QaAgent>();
+// Stage E(使用者自訂擴充):QA 判定 PASS 之後把 PRD+QA 結論落地成測試報告,交給人工驗收,
+// 見 TestReportAgent.cs 類別註解、workflows/pm-dispatch-pipeline.json 的 "report" 步驟。
+// 不呼叫 LLM,不需要在 config/appsettings.json 的 Models 設定對應項目。
+services.AddSingleton<IAgent, AI.Agents.TestReportAgent>();
 services.AddSingleton<IAgent>(sp => new BuildAgent(
     sp.GetRequiredService<AppConfig>(),
     sp.GetRequiredService<IToolRuntime>()));
@@ -146,21 +168,39 @@ services.AddSingleton<IAgent>(sp => new DeployAgent(
     sp.GetRequiredService<IToolRuntime>()));
 
 // Phase 4:平行 Coder(規格書 v3 第 19 節)。CoderAgent 從 Phase 1 就支援具名多實例
-// (constructor 的 name 參數),這裡各自用 "CoderA"/"CoderB" 註冊,對應
-// config/appsettings.json 的 Models 設定裡新增的兩筆項目、以及
-// workflows/parallel-pipeline.json 的 "parallel": ["CoderA", "CoderB"]。
-// 只有在真的要跑平行 Pipeline 時才會被 Orchestrator 用到,序列 Pipeline(default-pipeline.json)
-// 不受影響。
+// (constructor 的 name 參數),這裡各自用 "CoderA"/"CoderB"/"CoderC" 註冊,對應
+// config/appsettings.json 的 Models 設定、以及 workflows/parallel-pipeline.json 的
+// "parallel": ["CoderA", "CoderB"] 和 workflows/pm-dispatch-pipeline.json 的
+// "parallel": ["CoderA", "CoderB", "CoderC"]。
+//
+// Stage C(使用者自訂擴充):這三個名字現在對應具體角色——CoderA 前端、CoderB 後端、
+// CoderC 系統架構師(使用者原始需求),各自載入獨立的 prompt 檔案(coder-frontend.v1.md /
+// coder-backend.v1.md / coder-architect.v1.md),之後使用者要調整某個角色的「skill」,
+// 直接編輯對應的 prompt 檔案即可,不需要改這裡的程式碼。這也代表 CoderA/CoderB 從原本
+// parallel-pipeline.json 用的「泛用、對稱的 Coder」變成「有專屬角色分工的 Coder」——
+// parallel-pipeline.json 原本的用法(兩個 Coder 各自獨立解同一題、之後比較)語意上會跟著
+// 改變(兩人現在會用各自的角色視角看同一份任務),但因為都還是同一份完整任務規格、沒有實際
+// 拆解分工,實際影響有限;真正「動態分派不同任務給三人」的是新的 pm-dispatch-pipeline.json。
+// 只有在真的要跑這些平行 Pipeline 時才會被 Orchestrator 用到,序列 Pipeline
+// (default-pipeline.json,用的是 Name="Coder"、預設 promptFile="coder.v1.md")不受影響。
 services.AddSingleton<IAgent>(sp => new CoderAgent(
     sp.GetRequiredService<IModelRegistry>(),
     sp.GetRequiredService<PromptTemplateLoader>(),
     sp.GetRequiredService<IToolRuntime>(),
-    "CoderA"));
+    "CoderA",
+    "coder-frontend.v1.md"));
 services.AddSingleton<IAgent>(sp => new CoderAgent(
     sp.GetRequiredService<IModelRegistry>(),
     sp.GetRequiredService<PromptTemplateLoader>(),
     sp.GetRequiredService<IToolRuntime>(),
-    "CoderB"));
+    "CoderB",
+    "coder-backend.v1.md"));
+services.AddSingleton<IAgent>(sp => new CoderAgent(
+    sp.GetRequiredService<IModelRegistry>(),
+    sp.GetRequiredService<PromptTemplateLoader>(),
+    sp.GetRequiredService<IToolRuntime>(),
+    "CoderC",
+    "coder-architect.v1.md"));
 services.AddSingleton<IAgent, MergeAgent>();
 
 var app = builder.Build();
@@ -225,34 +265,6 @@ else
         "找不到 MCP Server 編譯輸出:{Path}。請先執行 `cd extensions/mcp-server && npm install && npm run build`。" +
         "本次啟動只會註冊 Native File Adapter,略過 MCP Adapter。",
         mcpServerEntry);
-}
-
-// Phase 3 驗證用:目前的 7 步 Pipeline(Planner~Deploy)還沒有任何步驟會真的觸發 High 風險
-// Capability(GitAgent 只呼叫 git.status,DeployAgent 還是空殼),所以特地留一個獨立、
-// 用完即丟的驗證路徑,直接示範 ToolRuntime 的 Capability Guard 擋 High 風險操作的效果——
-// 不影響、不參與正式的 Workflow 執行。設定環境變數 AI_DEVPLATFORM_TEST_CAPABILITY_GUARD=1
-// 才會執行,預設完全不會跑到這段。
-if (Environment.GetEnvironmentVariable("AI_DEVPLATFORM_TEST_CAPABILITY_GUARD") == "1")
-{
-    var testFilePath = Path.Combine(Path.GetTempPath(), $"ai-devplatform-guard-test-{Guid.NewGuid():N}.txt");
-    await File.WriteAllTextAsync(testFilePath, "Capability Guard 測試用的一次性檔案,可以安全刪除。");
-    logger.LogInformation(
-        "[Capability Guard 測試] 已建立測試檔案:{Path},接下來會呼叫 file.deleteFile" +
-        "(對應 Capability 'File.Delete',風險等級 High,應該會跳出人工核准提示)。",
-        testFilePath);
-
-    var deleteResult = await toolRuntime.InvokeAsync(
-        "file.deleteFile",
-        new ToolRequest("file.deleteFile", new Dictionary<string, object?> { ["path"] = testFilePath }));
-
-    logger.LogInformation(
-        "[Capability Guard 測試] file.deleteFile 執行結果:Success={Success}, Error={Error}, 檔案是否還存在={StillExists}",
-        deleteResult.Success, deleteResult.Error, File.Exists(testFilePath));
-
-    if (File.Exists(testFilePath))
-    {
-        File.Delete(testFilePath); // 若剛好被核准拒絕,這裡直接清掉測試檔案,不留垃圾。
-    }
 }
 
 var parallelWorkflowPath = Path.Combine(repoRoot, "workflows", "parallel-pipeline.json");

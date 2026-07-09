@@ -16,6 +16,16 @@ namespace AI.Agents;
 /// AgentOrchestrator 真的把流程退回 Coder,並把這裡的意見透過 InputArtifacts 傳回去(見
 /// CoderAgent.cs 的重試邏輯)。LLM 沒有照格式回覆時,保守地視為 NEEDS_CHANGES(誠實地當作
 /// 「看不懂結論,不能算過」,而不是預設放行)。
+///
+/// Stage C 修正(順手修掉一個既有的 bug,不是 Stage C 才出現的,只是這次改平行 Coder 的邏輯
+/// 時才發現):原本用 `.FirstOrDefault()` 抓 CodeArtifact,有兩個問題——(1) Coder 被退回重做
+/// 之後,`.FirstOrDefault()` 抓到的還是「第一次」的舊版本摘要,不是重做後的最新版本,等於
+/// Reviewer 永遠在審查同一份沒被修過的內容,重試迴圈的「根據意見修正」變成空轉,能不能過純粹看
+/// LLM 對同一份輸入的隨機性;(2) 平行 Coder(parallel-pipeline.json / pm-dispatch-pipeline.json)
+/// 有多個 CodeArtifact,`.FirstOrDefault()` 只看得到第一個分支,完全忽略其他分支寫了什麼。
+/// 改成:如果有 Merge 步驟產生的彙整報告(平行 Coder 之後才會有,判斷方式是「有不只一個
+/// CodeArtifact,而且有一份 DocumentArtifact 的時間點晚於最新一個 CodeArtifact」),就審查那份
+/// 彙整報告;否則(單一 Coder,或還沒跑到 Merge)退回審查最新一個 CodeArtifact 的摘要。
 /// </summary>
 public sealed class ReviewerAgent : IAgent
 {
@@ -43,8 +53,7 @@ public sealed class ReviewerAgent : IAgent
         var provider = _modelRegistry.GetProviderForAgent(Name);
         var model = _modelRegistry.GetModelNameForAgent(Name);
 
-        var codeSummary = request.InputArtifacts.OfType<CodeArtifact>().FirstOrDefault()?.Summary
-            ?? "(沒有收到 Coder 的修改建議。)";
+        var codeSummary = BuildCodeSummary(request.InputArtifacts);
 
         var userMessage =
             "請 Review 以下 Coder 提出的修改建議,指出 Security / Performance 上的問題(如果沒有明顯問題," +
@@ -78,6 +87,27 @@ public sealed class ReviewerAgent : IAgent
             Success: verdict,
             OutputArtifacts: new IArtifact[] { review },
             FailureReason: verdict ? null : string.Join("\n", findings));
+    }
+
+    /// <summary>
+    /// 見類別開頭「Stage C 修正」註解:有 Merge 彙整報告就審那份(涵蓋所有平行分支、而且是
+    /// 最新的),沒有的話退回審查最新一個 CodeArtifact(而不是舊的 FirstOrDefault)。
+    /// </summary>
+    private static string BuildCodeSummary(IReadOnlyList<IArtifact> inputArtifacts)
+    {
+        var codeArtifacts = inputArtifacts.OfType<CodeArtifact>().ToList();
+        var latestCode = codeArtifacts.LastOrDefault();
+        if (latestCode is null)
+        {
+            return "(沒有收到 Coder 的修改建議。)";
+        }
+
+        var latestDocument = inputArtifacts.OfType<DocumentArtifact>().LastOrDefault();
+        var mergeReportLooksNewer = codeArtifacts.Count > 1
+            && latestDocument is not null
+            && latestDocument.CreatedAt >= latestCode.CreatedAt;
+
+        return mergeReportLooksNewer ? latestDocument!.Content : latestCode.Summary;
     }
 
     /// <summary>

@@ -45,7 +45,7 @@ export function activate(context: vscode.ExtensionContext): void {
     outputChannel,
     approvalBridge,
     vscode.commands.registerCommand("aiDevPlatform.openChat", () => {
-      ChatPanel.createOrShow(resolveApiBaseUrl, runStateStore, outputChannel);
+      ChatPanel.createOrShow(context.extensionUri, resolveApiBaseUrl, runStateStore, outputChannel);
     }),
     // 內部指令,由 ChatPanel 的「顯示內容/Diff」按鈕觸發,不對外出現在 Command Palette
     // (需要 artifactId 這個參數,直接從 Palette 呼叫沒有意義)。

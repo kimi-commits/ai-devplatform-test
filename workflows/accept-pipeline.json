@@ -1,0 +1,7 @@
+{
+  "workflowId": "accept-pipeline",
+  "steps": [
+    { "id": "git",    "agent": "Git",    "onSuccess": "deploy" },
+    { "id": "deploy", "agent": "Deploy" }
+  ]
+}

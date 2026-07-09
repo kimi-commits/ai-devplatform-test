@@ -1,0 +1,12 @@
+{
+  "workflowId": "pm-dispatch-pipeline",
+  "steps": [
+    { "id": "dispatch", "agent": "ProjectManager", "onSuccess": "code" },
+    { "id": "code",   "parallel": ["CoderA", "CoderB", "CoderC"], "onAllSuccess": "merge", "onFailure": "code", "maxRetries": 3 },
+    { "id": "merge",  "agent": "Merge",    "onSuccess": "review" },
+    { "id": "review", "agent": "Reviewer", "onSuccess": "qa",     "onFailure": "code", "maxRetries": 3 },
+    { "id": "qa",     "agent": "QA",       "onSuccess": "report", "onFailure": "code", "maxRetries": 3 },
+    { "id": "report", "agent": "TestReport" }
+  ],
+  "onRetryExceeded": "EscalateToHuman"
+}

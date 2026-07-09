@@ -17,9 +17,19 @@ public sealed record AppConfig(
     [property: JsonPropertyName("Deploy")] DeployOptions? Deploy = null,
     [property: JsonPropertyName("Unity")] UnityOptions? Unity = null);
 
+/// <summary>
+/// TimeoutSeconds(使用者自訂擴充):`OpenAI` SDK(`System.ClientModel.Primitives.
+/// ClientPipelineOptions`)的 `NetworkTimeout` 預設只有 100 秒,49B 這種大模型單輪生成常常
+/// 超過這個時間,尤其是平行 CoderA/CoderB/CoderC 一起打 API、伺服器端排隊變慢的時候——逾時後
+/// SDK 自己的 `ClientRetryPolicy` 會重試(預設重試 3 次、總共嘗試 4 次),每次都套用同一個
+/// 100 秒逾時,4 次全部逾時最終才把 `"Retry failed after 4 tries."` 這個例外往上拋給
+/// AgentOrchestrator,導致該 Step 被判定失敗。這裡讓逾時時間可以在設定檔調整,不用改程式碼
+/// 重新編譯,見 OpenAiCompatibleProvider.cs 建構子怎麼使用這個值。預設 300 秒(5 分鐘)。
+/// </summary>
 public sealed record ModelProviderConfig(
     [property: JsonPropertyName("BaseUrl")] string BaseUrl,
-    [property: JsonPropertyName("ApiKeyEnvVar")] string ApiKeyEnvVar);
+    [property: JsonPropertyName("ApiKeyEnvVar")] string ApiKeyEnvVar,
+    [property: JsonPropertyName("TimeoutSeconds")] int TimeoutSeconds = 300);
 
 /// <summary>
 /// DeployAgent 真正的部署動作(見 AI.Agents/DeployAgent.cs、AI.Tools/Adapters/

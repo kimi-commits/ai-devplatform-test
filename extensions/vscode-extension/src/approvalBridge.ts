@@ -37,9 +37,22 @@ export class ApprovalBridge implements vscode.Disposable {
   start(): void {
     fs.mkdirSync(this.approvalsDir, { recursive: true });
 
-    // Extension 啟動時,.ai-devplatform/approvals/ 底下可能已經躺著 AI.Host 更早寫入、
-    // 還沒被處理的 request 檔案(例如 Extension 比 AI.Host 晚啟動),先掃一次補上。
-    this.scanExisting();
+    // 修正(2026-07):這裡原本會把 .ai-devplatform/approvals/ 底下既有的 *.request.json
+    // 都當成「新請求」跳出核准 Modal——用意是接住「Extension 比 AI.Host 晚啟動」這種正常
+    // 情境,但代價是:如果 AI.Host 那個 process 中途被關掉(Ctrl+C、crash)、來不及在收到
+    // response 後清掉 request/response 檔案,這些「孤兒」檔案就會永遠留在磁碟上,而且
+    // 每次重開 VS Code / Extension 重新啟動時都會被 scanExisting() 重新掃到、重新跳出一次
+        // 一模一樣的核准對話框——即使那個請求早就已經被回答過、發出請求的 process 也早就不在了。
+    // 使用者實測時就是被這個問題困擾:移除了會產生新請求的 demo 程式碼之後,舊的孤兒檔案
+    // 還是會在每次啟動時跳出來。
+    //
+    // 修正方式:啟動時既有的 request 檔案一律視為「上一輪留下的孤兒」直接靜默清掉(連同
+    // 對應的 response 檔案,如果存在的話),不再跳 Modal——如果 AI.Host 真的還在跑、還在等
+    // 這個請求的回應,它會在清掉 request 檔案後的下一次輪詢發現檔案消失,原本的邏輯
+        // (VsCodeBridgeApprovalPrompt.AskAsync)只檢查 response 檔案是否出現,不會因為 request
+        // 檔案被刪除而出錯,只是會繼續等到逾時、視為拒絕——這個 race window 在實務上極窄
+    // (Extension 啟動通常遠早於任何後續的 High 風險操作),可以接受。
+    this.cleanupOrphans();
 
     const pattern = new vscode.RelativePattern(this.approvalsDir, "*.request.json");
     this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
@@ -48,7 +61,7 @@ export class ApprovalBridge implements vscode.Disposable {
     this.outputChannel.appendLine(`[ApprovalBridge] 開始監看 ${this.approvalsDir}`);
   }
 
-  private scanExisting(): void {
+  private cleanupOrphans(): void {
     let entries: string[];
     try {
       entries = fs.readdirSync(this.approvalsDir);
@@ -58,7 +71,23 @@ export class ApprovalBridge implements vscode.Disposable {
 
     for (const name of entries) {
       if (name.endsWith(".request.json")) {
-        this.handleRequestFile(path.join(this.approvalsDir, name));
+        const requestPath = path.join(this.approvalsDir, name);
+        const responsePath = requestPath.replace(/\.request\.json$/, ".response.json");
+        try {
+          fs.unlinkSync(requestPath);
+        } catch {
+          // 忽略——檔案可能剛好被別的地方清掉了。
+        }
+        try {
+          if (fs.existsSync(responsePath)) {
+            fs.unlinkSync(responsePath);
+          }
+        } catch {
+          // 同上。
+        }
+        this.outputChannel.appendLine(
+          `[ApprovalBridge] 清除啟動時遺留的孤兒核准請求檔案:${name}(不會跳出核准對話框)`
+        );
       }
     }
   }

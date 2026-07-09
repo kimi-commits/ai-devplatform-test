@@ -1,0 +1,55 @@
+/*
+ * AI-DOS Chat 面板樣式。原本是內嵌在 chatPanel.ts 的 <style> 字串裡,跟 HTML/JS
+ * 一起透過 webview.html 整包寫入,結果在某個 VS Code/Electron 版本組合下觸發了
+ * webview 內部 document.write 的一個 bug:整份 webview.html 字串只要超過某個總長度
+ * 門檻(實測落在 5.9KB~6.1KB 之間,跟內容本身無關,單純是總長度),document.write
+ * 就會直接丟出 SyntaxError,導致整個 <script> 完全沒機會執行(按什麼都沒反應)。
+ * 拆成獨立的 .css/.js 檔案、透過 webview.asWebviewUri() 用 <link>/<script src=""> 載入,
+ * 是 VS Code 官方文件建議的標準做法,也剛好完全繞開這個 document.write 大小限制的問題
+ * (外部資源走的是另一條載入路徑,不會整包塞進 document.write)。見 chatPanel.ts 開頭註解。
+ */
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--vscode-font-family);
+  color: var(--vscode-foreground);
+  padding: 8px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+/* 對話紀錄區佔滿剩餘空間、自己捲動;輸入列(下面 #inputRow)固定在視窗最底部,
+   不會因為訊息變多而被推到畫面外,需要額外往下捲才看得到。 */
+#transcript { flex: 1 1 auto; min-height: 0; border: 1px solid var(--vscode-panel-border); border-radius: 4px; overflow-y: auto; padding: 8px; margin-bottom: 8px; }
+.msg { margin-bottom: 6px; white-space: pre-wrap; }
+.user { color: var(--vscode-textLink-foreground); }
+.system { color: var(--vscode-descriptionForeground); }
+.pm { color: var(--vscode-charts-purple, var(--vscode-foreground)); }
+#inputRow { flex: 0 0 auto; display: flex; gap: 6px; align-items: flex-end; }
+#messageInput {
+  flex: 1;
+  resize: vertical;
+  min-height: 1.6em;
+  max-height: 12em;
+  font-family: inherit;
+  font-size: inherit;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  padding: 4px 6px;
+  box-sizing: border-box;
+}
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: 0.6; }
+.diffButton { margin-left: 6px; }
+.finalizeButton { margin-top: 4px; display: block; font-weight: bold; }
+/* 狀態列:顯示「思考中/執行中哪一步」,讓人一眼看出 AI 還在跑,不是卡住(見
+   ChatPanel.setStatus)。空字串時用 :empty 讓它不佔版面,不會在閒置時留一條空白列。 */
+#statusBar {
+  flex: 0 0 auto;
+  min-height: 1.2em;
+  margin-bottom: 4px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+#statusBar:empty { display: none; }

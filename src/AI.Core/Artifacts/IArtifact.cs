@@ -67,3 +67,14 @@ public sealed record DocumentArtifact(
     string ArtifactId, string WorkflowId, string? SnapshotId, DateTimeOffset CreatedAt,
     string Content, string? RefPath = null)
     : ArtifactBase(ArtifactId, nameof(DocumentArtifact), WorkflowId, SnapshotId, CreatedAt, RefPath);
+
+/// <summary>
+/// Stage C(使用者自訂擴充,見 README「迭代開發迴圈」章節):ProjectManagerAgent 讀完 PRD 之後,
+/// 針對平行 Coder 機制裡「每一個具名角色」各自產生一份專屬任務內容(跟 DocumentArtifact 的差異
+/// 是多了 AssigneeAgentName,讓 CoderAgent 可以只挑「屬於自己」的那一份,而不是所有平行分支
+/// 都收到一模一樣的內容——見 CoderAgent.ExecuteAsync 的讀取邏輯)。
+/// </summary>
+public sealed record TaskAssignmentArtifact(
+    string ArtifactId, string WorkflowId, string? SnapshotId, DateTimeOffset CreatedAt,
+    string AssigneeAgentName, string Content, string? RefPath = null)
+    : ArtifactBase(ArtifactId, nameof(TaskAssignmentArtifact), WorkflowId, SnapshotId, CreatedAt, RefPath);
